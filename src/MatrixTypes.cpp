@@ -206,6 +206,13 @@ void to_json(nlohmann::json& j, const SyncResponse& r) {
             room_json["ephemeral"] = ephemeral;
         }
 
+        // Unread notification count (bsfchat extension)
+        if (room.unread_count) {
+            room_json["unread_notifications"] = {
+                {"notification_count", *room.unread_count}
+            };
+        }
+
         rooms_join[room_id] = room_json;
     }
     j["rooms"] = {{"join", rooms_join}};
@@ -247,6 +254,13 @@ void from_json(const nlohmann::json& j, SyncResponse& r) {
                     RoomEvent ev;
                     from_json(ev_json, ev);
                     room.ephemeral->events.push_back(std::move(ev));
+                }
+            }
+
+            if (room_json.contains("unread_notifications")) {
+                const auto& un = room_json["unread_notifications"];
+                if (un.contains("notification_count")) {
+                    room.unread_count = un["notification_count"].get<int>();
                 }
             }
 

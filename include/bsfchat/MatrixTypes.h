@@ -106,6 +106,7 @@ struct JoinedRoom {
     RoomState state;
     std::optional<RoomState> account_data;
     std::optional<EphemeralEvents> ephemeral;
+    std::optional<int> unread_count;
 };
 
 struct SyncResponse {
