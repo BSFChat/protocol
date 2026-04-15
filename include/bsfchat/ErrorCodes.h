@@ -44,6 +44,10 @@ struct MatrixError {
     static MatrixError invalid_param(const std::string& msg = "Invalid parameter");
     static MatrixError too_large(const std::string& msg = "Content too large");
     static MatrixError unrecognized(const std::string& msg = "Unrecognized request");
+    static MatrixError limit_exceeded(const std::string& msg = "Rate limit exceeded", int retry_after_ms = 0);
+
+    // Optional retry_after_ms field, emitted when set.
+    int retry_after_ms = 0;
 };
 
 } // namespace bsfchat

@@ -1,4 +1,5 @@
 #include "bsfchat/MatrixTypes.h"
+#include "bsfchat/Permissions.h"
 
 namespace bsfchat {
 
@@ -467,13 +468,37 @@ void from_json(const nlohmann::json& j, RoomTypeContent& r) {
 
 // ServerRole
 void to_json(nlohmann::json& j, const ServerRole& r) {
-    j = {{"name", r.name}, {"level", r.level}, {"color", r.color}};
+    j = {
+        {"id", r.id},
+        {"name", r.name},
+        {"color", r.color},
+        {"position", r.position},
+        {"permissions", permission::flags_to_hex(r.permissions)},
+        {"mentionable", r.mentionable},
+        {"hoist", r.hoist}
+    };
+    // Legacy
+    if (r.level != 0) j["level"] = r.level;
 }
 
 void from_json(const nlohmann::json& j, ServerRole& r) {
+    r.id = j.value("id", "");
     r.name = j.value("name", "");
-    r.level = j.value("level", 0);
     r.color = j.value("color", "");
+    r.position = j.value("position", 0);
+    if (j.contains("permissions")) {
+        const auto& p = j["permissions"];
+        if (p.is_string()) {
+            r.permissions = permission::flags_from_hex(p.get<std::string>());
+        } else if (p.is_number_integer()) {
+            r.permissions = p.get<std::uint64_t>();
+        }
+    }
+    r.mentionable = j.value("mentionable", false);
+    r.hoist = j.value("hoist", false);
+    r.level = j.value("level", 0);
+    // Fallback: if role has no explicit id but has a name, derive a stable id.
+    if (r.id.empty() && !r.name.empty()) r.id = r.name;
 }
 
 // ServerRolesContent
@@ -495,6 +520,48 @@ void from_json(const nlohmann::json& j, ServerRolesContent& r) {
             r.roles.push_back(std::move(role));
         }
     }
+}
+
+// MemberRolesContent
+void to_json(nlohmann::json& j, const MemberRolesContent& r) {
+    j = nlohmann::json::object();
+    j["role_ids"] = r.role_ids;
+}
+
+void from_json(const nlohmann::json& j, MemberRolesContent& r) {
+    if (j.contains("role_ids") && j["role_ids"].is_array()) {
+        for (const auto& id : j["role_ids"]) {
+            if (id.is_string()) r.role_ids.push_back(id.get<std::string>());
+        }
+    }
+}
+
+// ChannelSettingsContent
+void to_json(nlohmann::json& j, const ChannelSettingsContent& c) {
+    j = nlohmann::json::object();
+    j["slowmode_seconds"] = c.slowmode_seconds;
+}
+
+void from_json(const nlohmann::json& j, ChannelSettingsContent& c) {
+    c.slowmode_seconds = j.value("slowmode_seconds", 0);
+}
+
+// ChannelPermissionOverride
+void to_json(nlohmann::json& j, const ChannelPermissionOverride& o) {
+    j = nlohmann::json::object();
+    j["allow"] = permission::flags_to_hex(o.allow);
+    j["deny"] = permission::flags_to_hex(o.deny);
+}
+
+void from_json(const nlohmann::json& j, ChannelPermissionOverride& o) {
+    auto read = [&](const char* key, std::uint64_t& out) {
+        if (!j.contains(key)) return;
+        const auto& v = j[key];
+        if (v.is_string()) out = permission::flags_from_hex(v.get<std::string>());
+        else if (v.is_number_integer()) out = v.get<std::uint64_t>();
+    };
+    read("allow", o.allow);
+    read("deny", o.deny);
 }
 
 } // namespace bsfchat

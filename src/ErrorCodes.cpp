@@ -3,7 +3,9 @@
 namespace bsfchat {
 
 nlohmann::json MatrixError::to_json() const {
-    return {{"errcode", errcode}, {"error", error}};
+    nlohmann::json j = {{"errcode", errcode}, {"error", error}};
+    if (retry_after_ms > 0) j["retry_after_ms"] = retry_after_ms;
+    return j;
 }
 
 MatrixError MatrixError::from_json(const nlohmann::json& j) {
@@ -55,6 +57,14 @@ MatrixError MatrixError::too_large(const std::string& msg) {
 
 MatrixError MatrixError::unrecognized(const std::string& msg) {
     return {.errcode = std::string(error_code::kUnrecognized), .error = msg};
+}
+
+MatrixError MatrixError::limit_exceeded(const std::string& msg, int retry_after_ms) {
+    MatrixError e;
+    e.errcode = std::string(error_code::kLimitExceeded);
+    e.error = msg;
+    e.retry_after_ms = retry_after_ms;
+    return e;
 }
 
 } // namespace bsfchat

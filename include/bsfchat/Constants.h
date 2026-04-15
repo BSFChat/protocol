@@ -46,6 +46,10 @@ namespace event_type {
     constexpr std::string_view kRoomCategory = "bsfchat.room.category";
     constexpr std::string_view kRoomType = "bsfchat.room.type";
     constexpr std::string_view kServerRoles = "bsfchat.server.roles";
+    constexpr std::string_view kMemberRoles = "bsfchat.member.roles";
+    constexpr std::string_view kChannelSettings = "bsfchat.channel.settings";
+    constexpr std::string_view kChannelPermissions = "bsfchat.channel.permissions";
+    constexpr std::string_view kRoomRedaction = "m.room.redaction";
 } // namespace event_type
 
 // Message types (m.room.message msgtype field)

@@ -14,6 +14,7 @@ add_library(bsfchat_protocol STATIC
     src/Identifiers.cpp
     src/JwtUtils.cpp
     src/ErrorCodes.cpp
+    src/Permissions.cpp
 )
 
 target_include_directories(bsfchat_protocol PUBLIC

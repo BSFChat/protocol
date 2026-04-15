@@ -199,16 +199,40 @@ struct RoomTypeContent {
     std::string type;  // "category", "text", or "voice"
 };
 
-// Server role definition
+// Server role definition. Discord-style: each role carries a bitfield of
+// permission flags (see bsfchat/Permissions.h) rather than a numeric level.
 struct ServerRole {
-    std::string name;
+    std::string id;             // stable identifier, e.g. "everyone", "mod", "admin", or UUID
+    std::string name;           // display name
+    std::string color;          // "#RRGGBB"
+    int position = 0;           // higher = higher in hierarchy
+    std::uint64_t permissions = 0; // bitfield, serialized as hex string
+    bool mentionable = false;
+    bool hoist = false;         // show members with this role separately in the sidebar
+    // Legacy — kept so older events still parse. Unused by new code.
     int level = 0;
-    std::string color;
 };
 
 // Server roles (state event content for bsfchat.server.roles)
 struct ServerRolesContent {
     std::vector<ServerRole> roles;
+};
+
+// Per-user role assignment (state event `bsfchat.member.roles`, state_key=userId)
+struct MemberRolesContent {
+    std::vector<std::string> role_ids;
+};
+
+// Per-channel misc settings (state event `bsfchat.channel.settings`, state_key="")
+struct ChannelSettingsContent {
+    int slowmode_seconds = 0;
+};
+
+// Per-channel allow/deny override for a specific role or user.
+// state event `bsfchat.channel.permissions`, state_key = "role:<id>" or "user:<mxid>"
+struct ChannelPermissionOverride {
+    std::uint64_t allow = 0;
+    std::uint64_t deny = 0;
 };
 
 // Profile
@@ -283,5 +307,14 @@ void from_json(const nlohmann::json& j, ServerRole& r);
 
 void to_json(nlohmann::json& j, const ServerRolesContent& r);
 void from_json(const nlohmann::json& j, ServerRolesContent& r);
+
+void to_json(nlohmann::json& j, const MemberRolesContent& r);
+void from_json(const nlohmann::json& j, MemberRolesContent& r);
+
+void to_json(nlohmann::json& j, const ChannelSettingsContent& c);
+void from_json(const nlohmann::json& j, ChannelSettingsContent& c);
+
+void to_json(nlohmann::json& j, const ChannelPermissionOverride& o);
+void from_json(const nlohmann::json& j, ChannelPermissionOverride& o);
 
 } // namespace bsfchat
