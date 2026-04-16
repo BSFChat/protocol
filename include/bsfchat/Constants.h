@@ -45,6 +45,7 @@ namespace event_type {
     constexpr std::string_view kTyping = "m.typing";
     constexpr std::string_view kRoomCategory = "bsfchat.room.category";
     constexpr std::string_view kRoomType = "bsfchat.room.type";
+    constexpr std::string_view kServerInfo = "bsfchat.server.info";
     constexpr std::string_view kServerRoles = "bsfchat.server.roles";
     constexpr std::string_view kMemberRoles = "bsfchat.member.roles";
     constexpr std::string_view kChannelSettings = "bsfchat.channel.settings";
