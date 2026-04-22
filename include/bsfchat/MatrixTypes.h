@@ -47,6 +47,7 @@ struct CreateRoomRequest {
     std::optional<bool> is_category;
     std::optional<std::string> parent_id;
     std::optional<int> sort_order;
+    std::optional<bool> is_direct; // Matrix DM flag — stored on the room
 };
 
 struct CreateRoomResponse {

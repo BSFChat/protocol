@@ -84,6 +84,7 @@ void to_json(nlohmann::json& j, const CreateRoomRequest& r) {
     set_optional(j, "is_category", r.is_category);
     set_optional(j, "parent_id", r.parent_id);
     set_optional(j, "sort_order", r.sort_order);
+    set_optional(j, "is_direct", r.is_direct);
 }
 
 void from_json(const nlohmann::json& j, CreateRoomRequest& r) {
@@ -96,6 +97,7 @@ void from_json(const nlohmann::json& j, CreateRoomRequest& r) {
     get_optional(j, "is_category", r.is_category);
     get_optional(j, "parent_id", r.parent_id);
     get_optional(j, "sort_order", r.sort_order);
+    get_optional(j, "is_direct", r.is_direct);
 }
 
 // CreateRoomResponse

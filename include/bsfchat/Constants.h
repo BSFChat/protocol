@@ -52,6 +52,10 @@ namespace event_type {
     constexpr std::string_view kChannelPermissions = "bsfchat.channel.permissions";
     constexpr std::string_view kRoomRedaction = "m.room.redaction";
     constexpr std::string_view kRoomPinnedEvents = "m.room.pinned_events";
+    // Server-wide screen-share policy (max quality preset). Written by
+    // admins via setMaxScreenShareQuality; read by every client on sync
+    // to clamp users' locally-chosen quality downward.
+    constexpr std::string_view kServerScreenShare = "bsfchat.server.screenshare";
 } // namespace event_type
 
 // Message types (m.room.message msgtype field)
