@@ -22,6 +22,7 @@ namespace api_path {
     constexpr std::string_view kProfile = "/_matrix/client/v3/profile/";
     constexpr std::string_view kJoinByAlias = "/_matrix/client/v3/join/";
     constexpr std::string_view kTyping = "/_matrix/client/v3/rooms/"; // + roomId + /typing/ + userId
+    constexpr std::string_view kPresence = "/_matrix/client/v3/presence/"; // + userId + /status
 } // namespace api_path
 
 // Matrix event types
@@ -43,6 +44,7 @@ namespace event_type {
     constexpr std::string_view kCallHangup = "m.call.hangup";
     constexpr std::string_view kCallMember = "m.call.member";
     constexpr std::string_view kTyping = "m.typing";
+    constexpr std::string_view kPresence = "m.presence";
     constexpr std::string_view kRoomCategory = "bsfchat.room.category";
     constexpr std::string_view kRoomType = "bsfchat.room.type";
     constexpr std::string_view kServerInfo = "bsfchat.server.info";

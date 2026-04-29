@@ -110,11 +110,21 @@ struct JoinedRoom {
     std::optional<int> unread_count;
 };
 
+// Top-level presence block in a /sync response. Matrix delivers
+// m.presence ephemerals here rather than per-room, since presence
+// follows the user, not the room. Each event's `sender` is the
+// user the presence describes; `content` carries the presence state
+// + optional `status_msg`.
+struct PresenceEvents {
+    std::vector<RoomEvent> events;
+};
+
 struct SyncResponse {
     std::string next_batch;
     struct {
         std::map<std::string, JoinedRoom> join;
     } rooms;
+    std::optional<PresenceEvents> presence;
 };
 
 // Messages response (GET /rooms/{roomId}/messages)

@@ -219,6 +219,20 @@ void to_json(nlohmann::json& j, const SyncResponse& r) {
         rooms_join[room_id] = room_json;
     }
     j["rooms"] = {{"join", rooms_join}};
+
+    // Top-level presence block — list of m.presence events for users
+    // we share rooms with. Optional; absent when nobody's status
+    // changed in this delta.
+    if (r.presence && !r.presence->events.empty()) {
+        nlohmann::json presence;
+        presence["events"] = nlohmann::json::array();
+        for (const auto& event : r.presence->events) {
+            nlohmann::json ev;
+            to_json(ev, event);
+            presence["events"].push_back(ev);
+        }
+        j["presence"] = presence;
+    }
 }
 
 void from_json(const nlohmann::json& j, SyncResponse& r) {
@@ -269,6 +283,17 @@ void from_json(const nlohmann::json& j, SyncResponse& r) {
 
             r.rooms.join[room_id] = std::move(room);
         }
+    }
+
+    // Top-level presence ingestion (Matrix spec §10.5).
+    if (j.contains("presence") && j["presence"].contains("events")) {
+        PresenceEvents pe;
+        for (auto& ev_json : j["presence"]["events"]) {
+            RoomEvent ev;
+            from_json(ev_json, ev);
+            pe.events.push_back(std::move(ev));
+        }
+        if (!pe.events.empty()) r.presence = std::move(pe);
     }
 }
 

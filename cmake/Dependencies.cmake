@@ -15,7 +15,12 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 
+# jwt-cpp 0.7 renamed its flags — set both the old and new names so
+# this works across versions. The examples subdir breaks iOS builds
+# because it uses multi-sysroot archs; disabling avoids the conflict.
 set(JWT_CPP_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(JWT_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(JWT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(JWT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(nlohmann_json jwt-cpp)
