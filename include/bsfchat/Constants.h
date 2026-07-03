@@ -42,6 +42,13 @@ namespace event_type {
     constexpr std::string_view kCallAnswer = "m.call.answer";
     constexpr std::string_view kCallCandidates = "m.call.candidates";
     constexpr std::string_view kCallHangup = "m.call.hangup";
+    // Mid-call SDP renegotiation (BSFChat extension, not Matrix spec —
+    // hence the bsfchat.* namespace). Carries {call_id, description:
+    // {type: "offer"|"answer", sdp}, version}. Used to add RTP video
+    // m-lines to an established call; only sent to peers that
+    // advertised `bsfchat_caps.video_rtp` in their invite/answer, so
+    // legacy clients never see it.
+    constexpr std::string_view kCallNegotiate = "bsfchat.call.negotiate";
     constexpr std::string_view kCallMember = "m.call.member";
     constexpr std::string_view kTyping = "m.typing";
     constexpr std::string_view kPresence = "m.presence";
