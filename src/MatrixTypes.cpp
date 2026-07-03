@@ -381,6 +381,8 @@ void to_json(nlohmann::json& j, const VoiceMemberContent& v) {
         {"active", v.active},
         {"muted", v.muted},
         {"deafened", v.deafened},
+        {"screen_sharing", v.screen_sharing},
+        {"camera_on", v.camera_on},
         {"device_id", v.device_id},
         {"joined_at", v.joined_at},
     };
@@ -390,6 +392,8 @@ void from_json(const nlohmann::json& j, VoiceMemberContent& v) {
     v.active = j.value("active", false);
     v.muted = j.value("muted", false);
     v.deafened = j.value("deafened", false);
+    v.screen_sharing = j.value("screen_sharing", false);
+    v.camera_on = j.value("camera_on", false);
     v.device_id = j.value("device_id", "");
     v.joined_at = j.value("joined_at", int64_t(0));
 }

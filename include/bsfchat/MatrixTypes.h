@@ -158,6 +158,8 @@ struct VoiceMemberContent {
     bool active = false;  // true = user is in the voice channel
     bool muted = false;
     bool deafened = false;
+    bool screen_sharing = false;
+    bool camera_on = false;
     std::string device_id;
     int64_t joined_at = 0;
 };
