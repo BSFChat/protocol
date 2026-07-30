@@ -115,6 +115,70 @@ std::optional<JwtClaims> jwt_verify(
     }
 }
 
+std::string livekit_token_sign(
+    const std::string& api_key,
+    const std::string& api_secret,
+    const std::string& identity,
+    const std::string& display_name,
+    const LiveKitGrants& grants,
+    int64_t ttl_seconds,
+    int64_t now_unix
+) {
+    if (api_key.empty()) throw std::invalid_argument("livekit_token_sign: empty api_key");
+    if (api_secret.empty()) throw std::invalid_argument("livekit_token_sign: empty api_secret");
+    if (identity.empty()) throw std::invalid_argument("livekit_token_sign: empty identity");
+    // A join/admin grant with no room name is a room-wildcard as far as
+    // LiveKit is concerned. Refuse to mint one rather than hand out a token
+    // that is broader than any caller intended.
+    if ((grants.room_join || grants.room_admin) && grants.room.empty()) {
+        throw std::invalid_argument("livekit_token_sign: room_join/room_admin requires a room name");
+    }
+
+    if (ttl_seconds < kLiveKitMinTtl) ttl_seconds = kLiveKitMinTtl;
+    if (ttl_seconds > kLiveKitMaxTtl) ttl_seconds = kLiveKitMaxTtl;
+
+    const int64_t now = now_unix > 0
+        ? now_unix
+        : std::chrono::duration_cast<std::chrono::seconds>(
+              std::chrono::system_clock::now().time_since_epoch()).count();
+
+    // The `video` grant. Keys are LiveKit's JSON tags — see LiveKitGrants.
+    picojson::object video;
+    video["room"] = picojson::value(grants.room);
+    video["roomJoin"] = picojson::value(grants.room_join);
+    video["roomAdmin"] = picojson::value(grants.room_admin);
+    video["canPublish"] = picojson::value(grants.can_publish);
+    video["canSubscribe"] = picojson::value(grants.can_subscribe);
+    video["canPublishData"] = picojson::value(grants.can_publish_data);
+    video["hidden"] = picojson::value(grants.hidden);
+    if (!grants.can_publish_sources.empty()) {
+        picojson::array sources;
+        sources.reserve(grants.can_publish_sources.size());
+        for (const auto& s : grants.can_publish_sources) {
+            sources.emplace_back(s);
+        }
+        video["canPublishSources"] = picojson::value(sources);
+    }
+
+    auto builder = jwt::create()
+        .set_type("JWT")
+        .set_issuer(api_key)
+        .set_subject(identity)
+        .set_issued_at(jwt::date(std::chrono::system_clock::from_time_t(static_cast<time_t>(now))))
+        .set_not_before(jwt::date(std::chrono::system_clock::from_time_t(static_cast<time_t>(now))))
+        .set_expires_at(jwt::date(std::chrono::system_clock::from_time_t(
+            static_cast<time_t>(now + ttl_seconds))))
+        .set_payload_claim("video", jwt::claim(picojson::value(video)));
+
+    // LiveKit also reads `identity` from the grants object in some code paths;
+    // `sub` is the canonical one and is what its own server SDKs set.
+    if (!display_name.empty()) {
+        builder = builder.set_payload_claim("name", jwt::claim(display_name));
+    }
+
+    return builder.sign(jwt::algorithm::hs256(api_secret));
+}
+
 nlohmann::json pem_to_jwk(const std::string& pem_public_key, const std::string& key_id) {
     // Parse the PEM public key
     auto bio = std::unique_ptr<BIO, decltype(&BIO_free)>(
