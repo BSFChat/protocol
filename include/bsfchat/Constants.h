@@ -24,6 +24,9 @@ namespace api_path {
     // Moderation audit log (read-only, server-scope admin permission).
     // bsfchat.* namespaced because it has no Matrix-spec equivalent.
     constexpr std::string_view kAuditLog = "/_matrix/client/v3/bsfchat/audit_log";
+    // The server-wide ban list (read-only; bans are placed and lifted through
+    // POST /rooms/{id}/ban and /unban, which is where the rank check lives).
+    constexpr std::string_view kServerBans = "/_matrix/client/v3/bsfchat/server_bans";
 
     // Parameterized paths (use fmt or string concat with room/event IDs)
     constexpr std::string_view kRoomPrefix = "/_matrix/client/v3/rooms/";
@@ -131,6 +134,11 @@ namespace limits {
     // Page sizes for the moderation audit log.
     constexpr int kDefaultAuditLimit = 50;
     constexpr int kMaxAuditLimit = 200;
+    // Page sizes for the server-wide ban list. Smaller ceiling than the audit
+    // log: a ban list is a working set an operator scrolls, not a history they
+    // grep, and the client renders every row.
+    constexpr int kDefaultServerBanLimit = 100;
+    constexpr int kMaxServerBanLimit = 500;
 } // namespace limits
 
 } // namespace bsfchat
