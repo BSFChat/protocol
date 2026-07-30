@@ -29,6 +29,7 @@ void to_json(nlohmann::json& j, const LoginRequest& r) {
     if (!r.token.empty()) j["token"] = r.token;
     set_optional(j, "device_id", r.device_id);
     set_optional(j, "initial_device_display_name", r.initial_device_display_name);
+    if (r.refresh_token) j["refresh_token"] = true;
 }
 
 void from_json(const nlohmann::json& j, LoginRequest& r) {
@@ -41,6 +42,7 @@ void from_json(const nlohmann::json& j, LoginRequest& r) {
     r.token = j.value("token", "");
     get_optional(j, "device_id", r.device_id);
     get_optional(j, "initial_device_display_name", r.initial_device_display_name);
+    r.refresh_token = j.value("refresh_token", false);
 }
 
 // LoginResponse
@@ -50,12 +52,16 @@ void to_json(nlohmann::json& j, const LoginResponse& r) {
         {"access_token", r.access_token},
         {"device_id", r.device_id},
     };
+    set_optional(j, "refresh_token", r.refresh_token);
+    set_optional(j, "expires_in_ms", r.expires_in_ms);
 }
 
 void from_json(const nlohmann::json& j, LoginResponse& r) {
     r.user_id = j.at("user_id").get<std::string>();
     r.access_token = j.at("access_token").get<std::string>();
     r.device_id = j.at("device_id").get<std::string>();
+    get_optional(j, "refresh_token", r.refresh_token);
+    get_optional(j, "expires_in_ms", r.expires_in_ms);
 }
 
 // RegisterRequest
@@ -63,6 +69,7 @@ void to_json(nlohmann::json& j, const RegisterRequest& r) {
     j = {{"username", r.username}, {"password", r.password}};
     set_optional(j, "device_id", r.device_id);
     set_optional(j, "initial_device_display_name", r.initial_device_display_name);
+    if (r.refresh_token) j["refresh_token"] = true;
 }
 
 void from_json(const nlohmann::json& j, RegisterRequest& r) {
@@ -70,6 +77,7 @@ void from_json(const nlohmann::json& j, RegisterRequest& r) {
     r.password = j.at("password").get<std::string>();
     get_optional(j, "device_id", r.device_id);
     get_optional(j, "initial_device_display_name", r.initial_device_display_name);
+    r.refresh_token = j.value("refresh_token", false);
 }
 
 // CreateRoomRequest
@@ -209,11 +217,15 @@ void to_json(nlohmann::json& j, const SyncResponse& r) {
             room_json["ephemeral"] = ephemeral;
         }
 
-        // Unread notification count (bsfchat extension)
-        if (room.unread_count) {
-            room_json["unread_notifications"] = {
-                {"notification_count", *room.unread_count}
-            };
+        // Unread counters. `notification_count` is every unread message from
+        // someone else; `highlight_count` is the @-mention subset, so a client
+        // can show a mention badge distinct from the plain unread dot. Both
+        // names are the Matrix-standard ones.
+        if (room.unread_count || room.highlight_count) {
+            auto unread = nlohmann::json::object();
+            if (room.unread_count) unread["notification_count"] = *room.unread_count;
+            if (room.highlight_count) unread["highlight_count"] = *room.highlight_count;
+            room_json["unread_notifications"] = std::move(unread);
         }
 
         rooms_join[room_id] = room_json;
@@ -278,6 +290,9 @@ void from_json(const nlohmann::json& j, SyncResponse& r) {
                 const auto& un = room_json["unread_notifications"];
                 if (un.contains("notification_count")) {
                     room.unread_count = un["notification_count"].get<int>();
+                }
+                if (un.contains("highlight_count")) {
+                    room.highlight_count = un["highlight_count"].get<int>();
                 }
             }
 

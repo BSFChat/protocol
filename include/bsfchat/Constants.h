@@ -10,10 +10,20 @@ namespace api_path {
     constexpr std::string_view kLogin = "/_matrix/client/v3/login";
     constexpr std::string_view kRegister = "/_matrix/client/v3/register";
     constexpr std::string_view kLogout = "/_matrix/client/v3/logout";
+    constexpr std::string_view kLogoutAll = "/_matrix/client/v3/logout/all";
+    // Authenticated password change. Requires re-authentication with the
+    // current password, and revokes the account's other sessions by default.
+    constexpr std::string_view kPasswordChange = "/_matrix/client/v3/account/password";
+    // Exchanges a refresh token for a fresh access/refresh pair.
+    constexpr std::string_view kRefresh = "/_matrix/client/v3/refresh";
+    constexpr std::string_view kWhoami = "/_matrix/client/v3/account/whoami";
     constexpr std::string_view kSync = "/_matrix/client/v3/sync";
     constexpr std::string_view kJoinedRooms = "/_matrix/client/v3/joined_rooms";
     constexpr std::string_view kCreateRoom = "/_matrix/client/v3/createRoom";
     constexpr std::string_view kMediaUpload = "/_matrix/media/v3/upload";
+    // Moderation audit log (read-only, server-scope admin permission).
+    // bsfchat.* namespaced because it has no Matrix-spec equivalent.
+    constexpr std::string_view kAuditLog = "/_matrix/client/v3/bsfchat/audit_log";
 
     // Parameterized paths (use fmt or string concat with room/event IDs)
     constexpr std::string_view kRoomPrefix = "/_matrix/client/v3/rooms/";
@@ -109,6 +119,18 @@ namespace limits {
     constexpr size_t kMaxUploadSizeMb = 50;
     constexpr size_t kMaxUsernameLength = 64;
     constexpr size_t kMinPasswordLength = 8;
+    // Ceiling on `m.mentions.user_ids` entries in a single event. A mention is
+    // a write per target plus a push-queue row per target's pusher, so an
+    // unbounded list is a cheap amplification primitive. Well above any real
+    // message; a client hitting this is broken or hostile.
+    constexpr size_t kMaxMentionsPerEvent = 50;
+    // Ceilings for POST /search.
+    constexpr int kDefaultSearchLimit = 20;
+    constexpr int kMaxSearchLimit = 100;
+    constexpr size_t kMaxSearchTermLength = 512;
+    // Page sizes for the moderation audit log.
+    constexpr int kDefaultAuditLimit = 50;
+    constexpr int kMaxAuditLimit = 200;
 } // namespace limits
 
 } // namespace bsfchat

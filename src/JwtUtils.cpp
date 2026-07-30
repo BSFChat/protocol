@@ -62,7 +62,8 @@ std::string jwt_sign(
 std::optional<JwtClaims> jwt_verify(
     const std::string& token,
     const std::string& pem_public_key,
-    const std::string& issuer
+    const std::string& issuer,
+    const std::string& expected_audience
 ) {
     try {
         auto verifier = jwt::verify()
@@ -70,8 +71,24 @@ std::optional<JwtClaims> jwt_verify(
             .with_issuer(issuer)
             .leeway(60); // 60 seconds clock skew tolerance
 
+        // Audience was previously never checked, so an ID token minted for ANY
+        // other OAuth client registered with the same identity provider
+        // verified successfully and was accepted as a chat login. An empty
+        // expected_audience preserves the old (unchecked) behaviour for
+        // callers that have no audience to assert.
+        if (!expected_audience.empty()) {
+            verifier = verifier.with_audience(expected_audience);
+        }
+
         auto decoded = jwt::decode(token);
         verifier.verify(decoded);
+
+        // with_audience() only constrains tokens that carry an `aud` claim in
+        // some jwt-cpp versions; require its presence explicitly so a token
+        // minted without an audience cannot slip through.
+        if (!expected_audience.empty() && !decoded.has_audience()) {
+            return std::nullopt;
+        }
 
         JwtClaims claims;
         claims.sub = decoded.get_subject();

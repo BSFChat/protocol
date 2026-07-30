@@ -20,12 +20,21 @@ struct LoginRequest {
     std::string token;                         // for OIDC token login
     std::optional<std::string> device_id;
     std::optional<std::string> initial_device_display_name;
+    // Client opts in to refresh tokens. When false the server issues a
+    // long-lived access token only (see kDefaultAccessTokenLifetimeMs), which
+    // is what pre-refresh clients rely on.
+    bool refresh_token = false;
 };
 
 struct LoginResponse {
     std::string user_id;
     std::string access_token;
     std::string device_id;
+    // Only present when the client asked for a refresh token.
+    std::optional<std::string> refresh_token;
+    // Remaining validity of `access_token`. Advisory: the server slides the
+    // expiry forward while the session stays in use.
+    std::optional<int64_t> expires_in_ms;
 };
 
 // Registration
@@ -34,6 +43,7 @@ struct RegisterRequest {
     std::string password;
     std::optional<std::string> device_id;
     std::optional<std::string> initial_device_display_name;
+    bool refresh_token = false;
 };
 
 // Room creation
@@ -107,7 +117,14 @@ struct JoinedRoom {
     RoomState state;
     std::optional<RoomState> account_data;
     std::optional<EphemeralEvents> ephemeral;
+    // Serialized as unread_notifications.notification_count — every unread
+    // message from somebody else.
     std::optional<int> unread_count;
+    // Serialized as unread_notifications.highlight_count — the subset of the
+    // above that @-mentions the reader (directly or via @room). A client wants
+    // this separately from unread_count so a mention badge can be rendered
+    // distinctly from the plain unread dot. Matrix-standard field name.
+    std::optional<int> highlight_count;
 };
 
 // Top-level presence block in a /sync response. Matrix delivers

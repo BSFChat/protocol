@@ -34,11 +34,19 @@ std::string jwt_sign(
 // Verify a JWT and extract claims.
 // pem_public_key: RSA public key in PEM format.
 // issuer: expected issuer claim.
-// Returns nullopt if verification fails (bad signature, expired, wrong issuer).
+// expected_audience: expected `aud` claim (the relying party's client_id).
+//   When non-empty, a token whose audience differs — or that carries no
+//   audience at all — is rejected. Without this an ID token minted for any
+//   other client registered with the same provider was accepted.
+//   Empty (the default) skips the audience check, preserving the previous
+//   behaviour for callers that have no audience to assert.
+// Returns nullopt if verification fails (bad signature, expired, wrong
+// issuer, wrong audience).
 std::optional<JwtClaims> jwt_verify(
     const std::string& token,
     const std::string& pem_public_key,
-    const std::string& issuer
+    const std::string& issuer,
+    const std::string& expected_audience = std::string()
 );
 
 // Convert an RSA public key (PEM) to a JWK (JSON Web Key) for the JWKS endpoint.
