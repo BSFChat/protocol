@@ -46,6 +46,8 @@ namespace event_type {
     constexpr std::string_view kRoomAvatar = "m.room.avatar";
     constexpr std::string_view kRoomMember = "m.room.member";
     constexpr std::string_view kRoomMessage = "m.room.message";
+    // Account data, not a room event: the user's peer -> DM room ids map.
+    constexpr std::string_view kDirect = "m.direct";
     constexpr std::string_view kRoomJoinRules = "m.room.join_rules";
     constexpr std::string_view kRoomPowerLevels = "m.room.power_levels";
     constexpr std::string_view kRoomCanonicalAlias = "m.room.canonical_alias";
