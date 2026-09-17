@@ -1,4 +1,5 @@
 #include "bsfchat/MatrixTypes.h"
+#include "bsfchat/Constants.h"
 #include "bsfchat/Permissions.h"
 
 namespace bsfchat {
@@ -245,6 +246,13 @@ void to_json(nlohmann::json& j, const SyncResponse& r) {
         }
         j["presence"] = presence;
     }
+
+    // Top-level account_data. m.direct is the only event we carry.
+    if (r.direct_rooms) {
+        j["account_data"] = {{"events", nlohmann::json::array({
+            {{"type", std::string(event_type::kDirect)}, {"content", *r.direct_rooms}},
+        })}};
+    }
 }
 
 void from_json(const nlohmann::json& j, SyncResponse& r) {
@@ -309,6 +317,24 @@ void from_json(const nlohmann::json& j, SyncResponse& r) {
             pe.events.push_back(std::move(ev));
         }
         if (!pe.events.empty()) r.presence = std::move(pe);
+    }
+
+    // m.direct out of top-level account_data. Parsed by hand and leniently:
+    // account-data events have no sender, so they are not RoomEvents, and a
+    // malformed entry must not cost the client the whole sync.
+    if (j.contains("account_data") && j["account_data"].contains("events")) {
+        for (const auto& ev : j["account_data"]["events"]) {
+            if (!ev.is_object() || ev.value("type", "") != event_type::kDirect) continue;
+            if (!ev.contains("content") || !ev["content"].is_object()) continue;
+            std::map<std::string, std::vector<std::string>> direct;
+            for (const auto& [peer, rooms] : ev["content"].items()) {
+                if (!rooms.is_array()) continue;
+                for (const auto& room : rooms) {
+                    if (room.is_string()) direct[peer].push_back(room.get<std::string>());
+                }
+            }
+            r.direct_rooms = std::move(direct);
+        }
     }
 }
 

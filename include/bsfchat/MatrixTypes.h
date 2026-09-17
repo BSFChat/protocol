@@ -142,6 +142,16 @@ struct SyncResponse {
         std::map<std::string, JoinedRoom> join;
     } rooms;
     std::optional<PresenceEvents> presence;
+    // The reader's direct-message rooms: peer user id -> room ids. Serialized
+    // as the Matrix-standard `m.direct` event under top-level
+    // account_data.events, and like that event it is a full replacement, not a
+    // delta. Absent means "nothing to report this sync", NOT "no DMs".
+    //
+    // The server derives it from rooms.is_direct rather than storing account
+    // data, so it covers both sides of a DM: without it the invited side has
+    // no way to tell a DM from a channel, because nothing else in /sync
+    // carries the flag.
+    std::optional<std::map<std::string, std::vector<std::string>>> direct_rooms;
 };
 
 // Messages response (GET /rooms/{roomId}/messages)

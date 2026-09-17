@@ -187,6 +187,53 @@ TEST(SyncResponse, RoundTrip) {
     EXPECT_EQ(parsed.rooms.join["!room:example.com"].state.events.size(), 1u);
 }
 
+// m.direct rides in top-level account_data. It is what lets the invited side
+// of a DM recognise the room; nothing else in /sync carries the flag.
+TEST(SyncResponse, DirectRoomsRoundTripAsMDirectAccountData) {
+    SyncResponse sync;
+    sync.next_batch = "s1";
+    sync.direct_rooms.emplace()["@bob:example.com"] = {"!dm:example.com"};
+
+    json j;
+    to_json(j, sync);
+    ASSERT_EQ(j["account_data"]["events"].size(), 1u);
+    EXPECT_EQ(j["account_data"]["events"][0]["type"], "m.direct");
+    EXPECT_EQ(j["account_data"]["events"][0]["content"]["@bob:example.com"][0],
+              "!dm:example.com");
+
+    SyncResponse parsed;
+    from_json(j, parsed);
+    ASSERT_TRUE(parsed.direct_rooms.has_value());
+    EXPECT_EQ(parsed.direct_rooms->at("@bob:example.com"),
+              std::vector<std::string>{"!dm:example.com"});
+}
+
+// Absent must stay distinguishable from empty: absent is "nothing to report",
+// and a client that read it as "no DMs" would drop its list on every sync.
+TEST(SyncResponse, DirectRoomsAbsentStaysAbsentAndMalformedIsSkipped) {
+    SyncResponse sync;
+    sync.next_batch = "s1";
+    json j;
+    to_json(j, sync);
+    EXPECT_FALSE(j.contains("account_data"));
+
+    SyncResponse parsed;
+    from_json(j, parsed);
+    EXPECT_FALSE(parsed.direct_rooms.has_value());
+
+    j["account_data"] = {{"events", json::array({
+        json{{"type", "m.push_rules"}, {"content", json::object()}},
+        json{{"type", "m.direct"}, {"content", {{"@bob:example.com", "not-an-array"},
+                                                {"@eve:example.com", json::array({"!r:x", 7})}}}},
+    })}};
+    SyncResponse lenient;
+    from_json(j, lenient);
+    ASSERT_TRUE(lenient.direct_rooms.has_value());
+    EXPECT_EQ(lenient.direct_rooms->count("@bob:example.com"), 0u);
+    EXPECT_EQ(lenient.direct_rooms->at("@eve:example.com"),
+              std::vector<std::string>{"!r:x"});
+}
+
 TEST(MessagesResponse, RoundTrip) {
     MessagesResponse resp;
     resp.start = "t1";
