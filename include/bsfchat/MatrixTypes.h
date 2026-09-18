@@ -127,6 +127,25 @@ struct JoinedRoom {
     std::optional<int> highlight_count;
 };
 
+// A room the reader has been invited to and has not joined.
+//
+// Matrix's shape, and deliberately not JoinedRoom's: no timeline, no
+// ephemeral, no unread counts. The reader is not in the room yet, so they get
+// what identifies the room and who invited them, and none of its history.
+// `invite_state` carries stripped state — the room-level events that name and
+// describe the room, plus the member events of the reader and of the inviter.
+// SqliteStore::get_invite_state is the exact list; everything else about the
+// room (power levels, roles, the rest of the member list, the timeline) is
+// withheld until the invite is accepted.
+//
+// The events are ordinary RoomEvents rather than the spec's four-field
+// stripped form: RoomEvent is the one event shape both ends already parse, and
+// a state event's id and timestamp are not secrets. What matters — and what is
+// enforced in the store — is WHICH events appear here.
+struct InvitedRoom {
+    RoomState invite_state;
+};
+
 // Top-level presence block in a /sync response. Matrix delivers
 // m.presence ephemerals here rather than per-room, since presence
 // follows the user, not the room. Each event's `sender` is the
@@ -140,6 +159,21 @@ struct SyncResponse {
     std::string next_batch;
     struct {
         std::map<std::string, JoinedRoom> join;
+        // Invites the reader has not answered yet.
+        //
+        // Every DELIVERED response states the COMPLETE pending set, not a
+        // delta — the server restates it the same way it restates m.direct, so
+        // that an invite which predates the client's sync token is still
+        // learned within one poll instead of never. A client may therefore
+        // take a delivered response's `invite` as the current truth and drop
+        // an invite that has stopped appearing: that is how an invite accepted
+        // or declined on another device clears here, and it is why there is no
+        // rooms.leave section to carry the rejection.
+        //
+        // Absent means the same as empty. A server that predates this section
+        // never sends it, and a client then simply never sees an invite — the
+        // behaviour it had before.
+        std::map<std::string, InvitedRoom> invite;
     } rooms;
     std::optional<PresenceEvents> presence;
     // The reader's direct-message rooms: peer user id -> room ids. Serialized

@@ -234,6 +234,83 @@ TEST(SyncResponse, DirectRoomsAbsentStaysAbsentAndMalformedIsSkipped) {
               std::vector<std::string>{"!r:x"});
 }
 
+TEST(SyncResponse, InviteSectionRoundTrip) {
+    SyncResponse sync;
+    sync.next_batch = "s7";
+
+    InvitedRoom invited;
+    RoomEvent name_ev;
+    name_ev.event_id = "$n:example.com";
+    name_ev.room_id = "!secret:example.com";
+    name_ev.sender = "@alice:example.com";
+    name_ev.type = "m.room.name";
+    name_ev.state_key = "";
+    name_ev.content.data = {{"name", "Planning"}};
+    name_ev.origin_server_ts = 1700000000000;
+    invited.invite_state.events.push_back(name_ev);
+
+    RoomEvent member_ev;
+    member_ev.event_id = "$m:example.com";
+    member_ev.room_id = "!secret:example.com";
+    member_ev.sender = "@alice:example.com";
+    member_ev.type = "m.room.member";
+    member_ev.state_key = "@bob:example.com";
+    member_ev.content.data = {{"membership", "invite"}};
+    member_ev.origin_server_ts = 1700000000001;
+    invited.invite_state.events.push_back(member_ev);
+
+    sync.rooms.invite["!secret:example.com"] = invited;
+
+    json j;
+    to_json(j, sync);
+    // Matrix's shape: rooms.invite.<id>.invite_state.events — NOT a timeline.
+    ASSERT_TRUE(j["rooms"].contains("invite"));
+    auto& room_json = j["rooms"]["invite"]["!secret:example.com"];
+    ASSERT_EQ(room_json["invite_state"]["events"].size(), 2u);
+    EXPECT_FALSE(room_json.contains("timeline"));
+    EXPECT_EQ(room_json["invite_state"]["events"][1]["content"]["membership"], "invite");
+
+    SyncResponse parsed;
+    from_json(j, parsed);
+    ASSERT_EQ(parsed.rooms.invite.count("!secret:example.com"), 1u);
+    auto& events = parsed.rooms.invite["!secret:example.com"].invite_state.events;
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].type, "m.room.name");
+    EXPECT_EQ(events[1].state_key, "@bob:example.com");
+}
+
+TEST(SyncResponse, NoInvitesWritesNoInviteSection) {
+    // A server with nothing to report must send the bytes it always did: an
+    // always-present empty `invite` object would be new output on every poll
+    // of every existing deployment.
+    SyncResponse sync;
+    sync.next_batch = "s1";
+    sync.rooms.join["!room:example.com"] = JoinedRoom{};
+
+    json j;
+    to_json(j, sync);
+    EXPECT_FALSE(j["rooms"].contains("invite"));
+    EXPECT_TRUE(j["rooms"].contains("join"));
+
+    SyncResponse parsed;
+    from_json(j, parsed);
+    EXPECT_TRUE(parsed.rooms.invite.empty());
+}
+
+TEST(SyncResponse, InviteWithEmptyStateIsStillAnInvite) {
+    // The room id is the invitation. A client must not drop the entry just
+    // because the server had no nameable state to strip for it.
+    json j = {
+        {"next_batch", "s3"},
+        {"rooms", {{"invite", {{"!bare:example.com", json::object()}}}}},
+    };
+
+    SyncResponse parsed;
+    from_json(j, parsed);
+    ASSERT_EQ(parsed.rooms.invite.count("!bare:example.com"), 1u);
+    EXPECT_TRUE(parsed.rooms.invite["!bare:example.com"].invite_state.events.empty());
+}
+
 TEST(MessagesResponse, RoundTrip) {
     MessagesResponse resp;
     resp.start = "t1";

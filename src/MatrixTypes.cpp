@@ -233,6 +233,28 @@ void to_json(nlohmann::json& j, const SyncResponse& r) {
     }
     j["rooms"] = {{"join", rooms_join}};
 
+    // Pending invites. Written only when there are some, so a server with
+    // nothing to report sends exactly the bytes it always did — but note that
+    // on a DELIVERED response its absence is meaningful (no invites pending),
+    // not merely uninformative. See SyncResponse::rooms::invite.
+    //
+    // No timeline, no ephemeral, no unread counts: an InvitedRoom has nowhere
+    // to put them, which is the point.
+    if (!r.rooms.invite.empty()) {
+        auto rooms_invite = nlohmann::json::object();
+        for (const auto& [room_id, room] : r.rooms.invite) {
+            nlohmann::json invite_state;
+            invite_state["events"] = nlohmann::json::array();
+            for (const auto& event : room.invite_state.events) {
+                nlohmann::json ev;
+                to_json(ev, event);
+                invite_state["events"].push_back(ev);
+            }
+            rooms_invite[room_id] = nlohmann::json{{"invite_state", invite_state}};
+        }
+        j["rooms"]["invite"] = std::move(rooms_invite);
+    }
+
     // Top-level presence block — list of m.presence events for users
     // we share rooms with. Optional; absent when nobody's status
     // changed in this delta.
@@ -305,6 +327,24 @@ void from_json(const nlohmann::json& j, SyncResponse& r) {
             }
 
             r.rooms.join[room_id] = std::move(room);
+        }
+    }
+
+    // Pending invites. A room listed here with no invite_state at all is still
+    // an invite — the room id is the invitation; the stripped state is only
+    // what lets a client label it.
+    if (j.contains("rooms") && j["rooms"].contains("invite")) {
+        for (auto& [room_id, room_json] : j["rooms"]["invite"].items()) {
+            InvitedRoom room;
+            if (room_json.contains("invite_state")
+                && room_json["invite_state"].contains("events")) {
+                for (auto& ev_json : room_json["invite_state"]["events"]) {
+                    RoomEvent ev;
+                    from_json(ev_json, ev);
+                    room.invite_state.events.push_back(std::move(ev));
+                }
+            }
+            r.rooms.invite[room_id] = std::move(room);
         }
     }
 
