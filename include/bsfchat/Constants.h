@@ -132,6 +132,13 @@ namespace limits {
     constexpr size_t kMaxUploadSizeMb = 50;
     constexpr size_t kMaxUsernameLength = 64;
     constexpr size_t kMinPasswordLength = 8;
+    // Ceiling on an m.reaction's `key` — the emoji a client groups and counts
+    // reactions by. Generous: a ZWJ sequence with skin-tone modifiers runs to
+    // tens of bytes. A storage bound, not an emoji validator; what counts as an
+    // emoji is a client concern and a moving target. Unbounded, it was an
+    // attacker-chosen string stored per reaction and pushed to every member of
+    // the room on every sync.
+    constexpr size_t kMaxReactionKeyLength = 64;
     // Ceiling on `m.mentions.user_ids` entries in a single event. A mention is
     // a write per target plus a push-queue row per target's pusher, so an
     // unbounded list is a cheap amplification primitive. Well above any real
