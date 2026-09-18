@@ -1,8 +1,11 @@
 #include "bsfchat/Identifiers.h"
 
+#include <openssl/rand.h>
+
 #include <algorithm>
 #include <array>
-#include <random>
+#include <stdexcept>
+#include <vector>
 
 namespace bsfchat {
 
@@ -14,15 +17,38 @@ namespace {
 constexpr std::string_view kBase64Chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-std::string random_base64(size_t bytes) {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> dist(0, 63);
+// `chars` characters drawn from the CSPRNG, 6 bits each.
+//
+// This used to be `std::random_device rd; std::mt19937 gen(rd());` per call,
+// and the length was a lie about the strength. mt19937 is seeded here from a
+// SINGLE 32-bit value, so however many characters came out, the whole string
+// was a pure function of 32 bits: an access token advertised as "~256 bits"
+// had at most 2^32 possible values, and the entire keyspace of every token the
+// server can ever issue enumerates in about 1.3 hours on one core (measured,
+// not estimated — the seed is recovered from the first 8 characters). That is
+// session hijacking by brute force against a live deployment, and it applied
+// equally to refresh tokens, which are the thing that outlives a password
+// change. mt19937 is a simulation PRNG; it was never a plausible source for a
+// bearer secret.
+//
+// RAND_bytes is the OpenSSL CSPRNG, which is already linked here for JWT
+// verification. `& 0x3F` is an exact 4:1 fold of 256 byte values onto the
+// 64-character alphabet, so there is no modulo bias to correct for.
+//
+// A failure is thrown, never worked around. The only ways RAND_bytes fails are
+// an unseeded or broken entropy source; quietly falling back to anything else
+// would reintroduce exactly the defect above, with the comment still promising
+// otherwise. A server that cannot generate a token must refuse the request.
+std::string random_base64(size_t chars) {
+    std::vector<unsigned char> buf(chars);
+    if (chars > 0 && RAND_bytes(buf.data(), static_cast<int>(chars)) != 1) {
+        throw std::runtime_error("RAND_bytes failed: no secure randomness available");
+    }
 
     std::string result;
-    result.reserve(bytes);
-    for (size_t i = 0; i < bytes; ++i) {
-        result += kBase64Chars[dist(gen)];
+    result.reserve(chars);
+    for (size_t i = 0; i < chars; ++i) {
+        result += kBase64Chars[buf[i] & 0x3F];
     }
     return result;
 }

@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 #include "bsfchat/Identifiers.h"
 
+#include <string>
+#include <unordered_set>
+
 using namespace bsfchat;
 
 TEST(UserId, ParseValid) {
@@ -92,4 +95,49 @@ TEST(Generators, UniqueTokens) {
 TEST(Generators, DeviceIdFormat) {
     auto id = generate_device_id();
     EXPECT_TRUE(id.starts_with("DEVICE_"));
+}
+
+// --- token entropy -----------------------------------------------------------
+//
+// The generators used to be mt19937 seeded from one 32-bit value, so every
+// token was one of 2^32 strings no matter how long it printed. The tests above
+// could not see that: two consecutive tokens still differ, and the length was
+// always right. What a 32-bit keyspace cannot survive is VOLUME — the birthday
+// bound turns it into repeats long before the strings themselves look suspect.
+
+TEST(Generators, TokensDoNotCollideAtVolume) {
+    // 500k draws from a 2^32 keyspace collide ~29 times on average, so the old
+    // generator failed this essentially always (probability of slipping
+    // through ~1e-13). A real 256-bit token space cannot collide here at all,
+    // which is why this is an equality against zero and not a threshold.
+    constexpr int kDraws = 500'000;
+    std::unordered_set<std::string> seen;
+    seen.reserve(kDraws * 2);
+    int collisions = 0;
+    for (int i = 0; i < kDraws; ++i) {
+        if (!seen.insert(generate_access_token()).second) ++collisions;
+    }
+    EXPECT_EQ(collisions, 0);
+}
+
+TEST(Generators, AccessTokenIsFullLengthAndInAlphabet) {
+    // Length is load-bearing: it is the only thing standing between the token
+    // and a brute-force, so a truncation regression must fail here.
+    const auto token = generate_access_token();
+    EXPECT_EQ(token.size(), 43u); // 43 * 6 bits = 258 bits
+    for (char c : token) {
+        EXPECT_TRUE((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                    (c >= '0' && c <= '9') || c == '-' || c == '_')
+            << "unexpected character '" << c << "' in access token";
+    }
+}
+
+TEST(Generators, EveryAlphabetCharacterIsReachable) {
+    // Guards the `& 0x3F` fold: an off-by-one in the mask would quietly shrink
+    // the alphabet (and so the keyspace) while every other test still passed.
+    std::unordered_set<char> seen;
+    for (int i = 0; i < 2000; ++i) {
+        for (char c : generate_access_token()) seen.insert(c);
+    }
+    EXPECT_EQ(seen.size(), 64u);
 }

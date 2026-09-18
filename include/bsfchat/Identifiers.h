@@ -61,7 +61,21 @@ std::string generate_event_id(std::string_view server_name);
 // Generate a random room ID: !<base64>:server_name
 std::string generate_room_id(std::string_view server_name);
 
-// Generate a random access token (32 bytes, base64url encoded)
+// Every generator below draws from the OpenSSL CSPRNG. They used to draw from
+// an mt19937 seeded with a single 32-bit value, which capped an access token at
+// 2^32 possible values however long it looked; see random_base64() in
+// Identifiers.cpp for the measurement and the reasoning.
+//
+// Consumers that depend on that property — the server stores access and refresh
+// tokens as bearer secrets — should guard on this macro, so that building
+// against a protocol checkout from before the fix fails at compile time instead
+// of silently issuing guessable tokens. A build that links the old library is
+// the failure mode that would otherwise reach production unnoticed: the server
+// falls back to fetching protocol `main` from GitHub when no local checkout is
+// present, so "it compiled" is not evidence of which version it got.
+#define BSFCHAT_PROTOCOL_CSPRNG_IDENTIFIERS 1
+
+// Generate a random access token: 43 base64url characters, ~256 bits.
 std::string generate_access_token();
 
 // Generate a random device ID
