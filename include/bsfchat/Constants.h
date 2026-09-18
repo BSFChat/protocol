@@ -152,6 +152,25 @@ constexpr std::string_view kLocalpartPrefix = "bot_";
 // displayname or nickname is simply absent rather than "".
 constexpr std::string_view kProfileKey = "bsfchat.bot";
 
+// Is this user id a bot's, judged from the id alone?
+//
+// Authoritative BECAUSE of the reservation, not in spite of it: registration
+// refuses the prefix and bot creation requires it, so the two sets are disjoint
+// by construction and no account can sit on the wrong side of this answer.
+//
+// Provided so a caller on a hot path — a rate limiter deciding which bucket a
+// request belongs in, a renderer deciding whether to draw a badge — can classify
+// a caller without a database round trip per request. Where the answer must
+// survive somebody changing that rule, ask the store (SqliteStore::is_bot),
+// which reads users.kind and is the fact rather than the convention.
+//
+// Takes a full user id ("@bot_deploy:example.com"), not a localpart.
+constexpr bool is_bot_user_id(std::string_view user_id) {
+    if (user_id.size() < 1 + kLocalpartPrefix.size()) return false;
+    if (user_id.front() != '@') return false;
+    return user_id.substr(1, kLocalpartPrefix.size()) == kLocalpartPrefix;
+}
+
 } // namespace bot
 
 namespace limits {
