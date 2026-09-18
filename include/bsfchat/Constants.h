@@ -75,6 +75,14 @@ namespace event_type {
     constexpr std::string_view kChannelSettings = "bsfchat.channel.settings";
     constexpr std::string_view kChannelPermissions = "bsfchat.channel.permissions";
     constexpr std::string_view kRoomRedaction = "m.room.redaction";
+    // Emoji reaction. Content is
+    //   {"m.relates_to": {"rel_type": "m.annotation", "event_id": "$...", "key": "👍"}}
+    // which is what the desktop client sends and what its MessageModel folds
+    // into the target message. Named here because the server now has to decide
+    // per event type what may be sent to a room, and matching a bare string
+    // literal in that table is how a type quietly ends up ungated.
+    constexpr std::string_view kReaction = "m.reaction";
+    constexpr std::string_view kRelAnnotation = "m.annotation";
     constexpr std::string_view kRoomPinnedEvents = "m.room.pinned_events";
     // Server-wide screen-share policy (max quality preset). Written by
     // admins via setMaxScreenShareQuality; read by every client on sync
