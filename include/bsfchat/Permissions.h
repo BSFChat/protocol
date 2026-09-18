@@ -38,12 +38,34 @@ constexpr Flags kMentionEveryone  = 1ULL <<  9;
 constexpr Flags kChangeNickname   = 1ULL << 11;
 constexpr Flags kManageNicknames  = 1ULL << 12;
 
+// Reactions
+//
+// Bit 14. Bit 13 is MANAGE_BOTS on the bot-accounts branch — do not reuse it.
+//
+// Separate from SEND_MESSAGES because muting somebody was not actually
+// possible before this: the server applied no permission check to m.reaction
+// at all, so a member with SEND_MESSAGES denied could still react. Gating
+// reactions on SEND_MESSAGES would have closed that hole while quietly
+// conflating two things moderators treat differently — a read-mostly channel
+// where everyone may react but only a few may post is an ordinary
+// arrangement, and so is muting someone completely.
+//
+// IN kEveryoneDefault, deliberately. The point of this flag is that denying
+// reactions becomes possible, not that reacting becomes a privilege, so a
+// server that upgrades must see no change in what anyone can do. Note that
+// kEveryoneDefault only seeds a NEW deployment: an existing one has its
+// @everyone permissions stored as a number in its server.roles event, and the
+// server backfills this bit into every role that already had SEND_MESSAGES
+// (see bootstrap_roles) precisely so the upgrade is invisible.
+constexpr Flags kAddReactions     = 1ULL << 14;
+
 // God mode
 constexpr Flags kAdministrator    = 1ULL << 15;
 
 // Default capabilities for the built-in @everyone role.
 constexpr Flags kEveryoneDefault =
-    kViewChannel | kSendMessages | kAttachFiles | kEmbedLinks | kChangeNickname;
+    kViewChannel | kSendMessages | kAttachFiles | kEmbedLinks | kChangeNickname |
+    kAddReactions;
 
 // Mask covering every flag we currently define — used for the ADMINISTRATOR
 // short-circuit and for UI "check all" toggles. Expand as new flags are added.
@@ -51,7 +73,7 @@ constexpr Flags kAllFlags =
     kViewChannel | kSendMessages | kAttachFiles | kEmbedLinks |
     kManageMessages | kManageChannels | kManageRoles | kKickMembers |
     kBanMembers | kMentionEveryone | kManageServer | kChangeNickname |
-    kManageNicknames | kAdministrator;
+    kManageNicknames | kAddReactions | kAdministrator;
 
 inline bool has(Flags flags, Flags p) {
     return (flags & p) == p;
