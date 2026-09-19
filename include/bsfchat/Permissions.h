@@ -38,6 +38,22 @@ constexpr Flags kMentionEveryone  = 1ULL <<  9;
 constexpr Flags kChangeNickname   = 1ULL << 11;
 constexpr Flags kManageNicknames  = 1ULL << 12;
 
+// Bot accounts: create one, list them, rotate its token, deactivate it.
+//
+// Its own flag rather than a corner of MANAGE_SERVER, because what it hands out
+// is qualitatively different from the rest of that flag's surface. A bot token
+// is a non-expiring bearer credential for a full user account — there is no
+// human behind it to re-authenticate, so it does not ride the access-token
+// expiry slide — and whoever can mint one can mint an identity that then picks
+// up whatever roles it is given. That is a capability an owner should be able to
+// delegate (or withhold) on its own, separately from "can edit the server name".
+//
+// Deliberately NOT in kEveryoneDefault: the default role must never be able to
+// manufacture accounts. It IS in kAllFlags, so ADMINISTRATOR short-circuits to
+// it like every other flag — which is also why an already-seeded Admin role on
+// an existing deployment picks this up without a re-seed.
+constexpr Flags kManageBots       = 1ULL << 13;
+
 // God mode
 constexpr Flags kAdministrator    = 1ULL << 15;
 
@@ -51,7 +67,7 @@ constexpr Flags kAllFlags =
     kViewChannel | kSendMessages | kAttachFiles | kEmbedLinks |
     kManageMessages | kManageChannels | kManageRoles | kKickMembers |
     kBanMembers | kMentionEveryone | kManageServer | kChangeNickname |
-    kManageNicknames | kAdministrator;
+    kManageNicknames | kManageBots | kAdministrator;
 
 inline bool has(Flags flags, Flags p) {
     return (flags & p) == p;

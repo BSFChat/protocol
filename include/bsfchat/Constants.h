@@ -27,6 +27,13 @@ namespace api_path {
     // The server-wide ban list (read-only; bans are placed and lifted through
     // POST /rooms/{id}/ban and /unban, which is where the rank check lives).
     constexpr std::string_view kServerBans = "/_matrix/client/v3/bsfchat/server_bans";
+    // Bot accounts. bsfchat.* namespaced for the same reason the two above are:
+    // Matrix has no concept of a bot account, so these are ours and must not
+    // squat a path the spec might later define. A bot IS an ordinary user
+    // account, so there is no bot-flavoured variant of any other endpoint —
+    // everything else a bot does goes through the normal routes and the normal
+    // bearer-token middleware.
+    constexpr std::string_view kBots = "/_matrix/client/v3/bsfchat/bots";
 
     // Parameterized paths (use fmt or string concat with room/event IDs)
     constexpr std::string_view kRoomPrefix = "/_matrix/client/v3/rooms/";
@@ -115,6 +122,57 @@ namespace spec {
 } // namespace spec
 
 // Default limits
+// Bot accounts.
+//
+// A bot is a USER — same users row, same roles, same permission evaluation, same
+// bearer-token middleware — distinguished only by `users.kind` and by living in a
+// reserved localpart namespace. Nothing here describes a parallel account type;
+// it describes the two facts a client or a handler needs in order to tell one
+// apart from a person.
+namespace bot {
+
+// Every bot localpart starts with this, and no human account may. The namespace
+// is the point, not the cosmetics: it means "is this a bot" has an answer that
+// does not depend on a database round trip, and — because a registration handler
+// refuses the prefix — that a person can never be handed a user id that a client
+// will badge as a bot. Exactly the same reasoning as the existing "server" and
+// "oidc_" reservations in AuthHandler::handle_register, and the reservation is
+// enforced in that same place so there is one list, not two that can drift.
+constexpr std::string_view kLocalpartPrefix = "bot_";
+
+// The key /profile/{userId} and /account/whoami carry for a bot.
+//
+// Surfaced as a profile field rather than as new membership state on purpose: a
+// client already fetches a profile to render a name and an avatar, whereas a new
+// m.room.member field would have to be backfilled into every room a bot is in
+// and would still be absent in rooms it has not joined. Bot-ness is a property of
+// the ACCOUNT, so it belongs on the account's profile.
+//
+// Emitted only when true. Absent means "not a bot", the same way an unset
+// displayname or nickname is simply absent rather than "".
+constexpr std::string_view kProfileKey = "bsfchat.bot";
+
+// Is this user id a bot's, judged from the id alone?
+//
+// Authoritative BECAUSE of the reservation, not in spite of it: registration
+// refuses the prefix and bot creation requires it, so the two sets are disjoint
+// by construction and no account can sit on the wrong side of this answer.
+//
+// Provided so a caller on a hot path — a rate limiter deciding which bucket a
+// request belongs in, a renderer deciding whether to draw a badge — can classify
+// a caller without a database round trip per request. Where the answer must
+// survive somebody changing that rule, ask the store (SqliteStore::is_bot),
+// which reads users.kind and is the fact rather than the convention.
+//
+// Takes a full user id ("@bot_deploy:example.com"), not a localpart.
+constexpr bool is_bot_user_id(std::string_view user_id) {
+    if (user_id.size() < 1 + kLocalpartPrefix.size()) return false;
+    if (user_id.front() != '@') return false;
+    return user_id.substr(1, kLocalpartPrefix.size()) == kLocalpartPrefix;
+}
+
+} // namespace bot
+
 namespace limits {
     constexpr int kDefaultSyncTimeoutMs = 30000;
     constexpr int kMaxSyncTimeoutMs = 300000;
@@ -141,6 +199,10 @@ namespace limits {
     // grep, and the client renders every row.
     constexpr int kDefaultServerBanLimit = 100;
     constexpr int kMaxServerBanLimit = 500;
+    // A bot's operator-supplied description ("what is this thing for"). Bounded
+    // because it is free text that every listing renders; the value is generous
+    // enough for a sentence and a link, which is all it is for.
+    constexpr size_t kMaxBotDescriptionLength = 512;
 } // namespace limits
 
 } // namespace bsfchat
