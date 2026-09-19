@@ -82,6 +82,14 @@ namespace event_type {
     constexpr std::string_view kChannelSettings = "bsfchat.channel.settings";
     constexpr std::string_view kChannelPermissions = "bsfchat.channel.permissions";
     constexpr std::string_view kRoomRedaction = "m.room.redaction";
+    // Emoji reaction. Content is
+    //   {"m.relates_to": {"rel_type": "m.annotation", "event_id": "$...", "key": "👍"}}
+    // which is what the desktop client sends and what its MessageModel folds
+    // into the target message. Named here because the server now has to decide
+    // per event type what may be sent to a room, and matching a bare string
+    // literal in that table is how a type quietly ends up ungated.
+    constexpr std::string_view kReaction = "m.reaction";
+    constexpr std::string_view kRelAnnotation = "m.annotation";
     constexpr std::string_view kRoomPinnedEvents = "m.room.pinned_events";
     // Server-wide screen-share policy (max quality preset). Written by
     // admins via setMaxScreenShareQuality; read by every client on sync
@@ -182,6 +190,13 @@ namespace limits {
     constexpr size_t kMaxUploadSizeMb = 50;
     constexpr size_t kMaxUsernameLength = 64;
     constexpr size_t kMinPasswordLength = 8;
+    // Ceiling on an m.reaction's `key` — the emoji a client groups and counts
+    // reactions by. Generous: a ZWJ sequence with skin-tone modifiers runs to
+    // tens of bytes. A storage bound, not an emoji validator; what counts as an
+    // emoji is a client concern and a moving target. Unbounded, it was an
+    // attacker-chosen string stored per reaction and pushed to every member of
+    // the room on every sync.
+    constexpr size_t kMaxReactionKeyLength = 64;
     // Ceiling on `m.mentions.user_ids` entries in a single event. A mention is
     // a write per target plus a push-queue row per target's pusher, so an
     // unbounded list is a cheap amplification primitive. Well above any real
