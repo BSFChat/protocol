@@ -254,6 +254,88 @@ namespace limits {
     // attacker-chosen string stored per reaction and pushed to every member of
     // the room on every sync.
     constexpr size_t kMaxReactionKeyLength = 64;
+
+    // ── How big a single message may be ───────────────────────────────────
+    //
+    // There was no bound of any kind, client-side or server-side, on the text
+    // of an m.room.message. `kMaxMessagesLimit` above is a PAGE SIZE and was
+    // repeatedly mistaken for a size limit; it bounds how many events come
+    // back from /messages and says nothing about how big one of them is.
+    //
+    // Unbounded, one authenticated member could post a multi-megabyte body,
+    // and every other member then paid for it: it is stored, indexed by FTS
+    // (which roughly doubles it), pushed through /sync to every member of the
+    // room, and returned by every backfill of that page forever after. Sending
+    // costs one request; receiving costs N. That is an amplifier, and it is
+    // cheaper to send than to receive.
+    //
+    // BYTES, not characters. Three reasons: bytes are what is stored, indexed
+    // and put on the wire, so bytes are what the limit is actually defending;
+    // `std::string::size()` needs no UTF-8 decode on the hot write path; and a
+    // codepoint count still has to be paired with a byte ceiling anyway,
+    // because 2,000 four-byte codepoints are 8 KB. The unfairness a byte limit
+    // normally carries — non-Latin text gets fewer characters for the same
+    // budget — is answered by setting it high rather than by counting
+    // codepoints: at 16 KiB, worst-case 4-bytes-per-character text still gets
+    // ~4,000 characters, which is twice what Discord allows anybody.
+    //
+    // 16 KiB is deliberately far above a typed message and comfortably above a
+    // deliberate paste (a stack trace, a config block, ~250 lines of code).
+    // This is not a style rule about message length — it is the point past
+    // which one member's send becomes everyone else's bandwidth.
+    constexpr size_t kMaxMessageBodyBytes = 16 * 1024;
+
+    // `formatted_body` is the SAME message as `body` after markup, and it is
+    // legitimately several times larger: a mention that is "@alice" in the
+    // body is an <a href="https://matrix.to/#/@alice:host">…</a> in the HTML,
+    // so a formatted roster of fifty names is ~1 KB of body against ~6 KB of
+    // HTML. Holding it to the plain-text ceiling would reject messages whose
+    // visible text is well inside the limit, and the composer — which can only
+    // count what the user typed — could not warn about it in advance.
+    //
+    // So: its own ceiling, derived rather than separately configurable, at 4x
+    // the body. One number for an operator to set, and the derivation keeps
+    // the two from drifting apart. The multiplier is the observed worst case
+    // for mention-dense HTML with headroom, not a guess at "some HTML".
+    constexpr size_t kFormattedBodyMultiplier = 4;
+    constexpr size_t kMaxFormattedBodyBytes =
+        kMaxMessageBodyBytes * kFormattedBodyMultiplier;
+
+    // Ceiling on the whole JSON body of one PUT /rooms/{id}/send/{type}/{txn},
+    // whatever the type.
+    //
+    // The text ceilings above cover m.room.message, which is the type this was
+    // found on, but the send allowlist also admits m.reaction and the
+    // call-signalling types, and `content` on any of them is free-form JSON
+    // that is stored and delivered exactly the same way. Bounding only the
+    // fields we happen to read would leave the hole open under a different
+    // key: an m.reaction whose `key` is a valid 8 bytes and which carries a
+    // 4 MB field nobody parses is the same amplifier with a different name.
+    //
+    // So the outer bound is on the REQUEST, not on any field, and it is
+    // checked before the JSON is parsed — which also means a hostile payload
+    // never reaches the parser. The call types keep a generous allowance on
+    // purpose: an SDP offer with a long candidate list is a real several-KB
+    // document and refusing one breaks a call, which is a worse failure than
+    // the one being prevented.
+    //
+    // 128 KiB leaves room for a maximal message — 16 KiB body + 64 KiB
+    // formatted_body + fifty mention ids + relation blocks — with slack, so
+    // the field limits are what a legitimate oversize message trips, and this
+    // is what a payload with no legitimate shape at all trips.
+    constexpr size_t kMaxEventContentBytes = 128 * 1024;
+
+    // The outer bound has to leave room for a message that passes both field
+    // bounds, or the field bounds become unreachable and their error messages
+    // become lies — the caller would be told "body may be 16 KiB" by a server
+    // that refuses the request before it ever looks at `body`. Asserted rather
+    // than commented because the three numbers are edited independently.
+    // Config::validate() enforces the same relation on the operator-set value.
+    static_assert(kMaxEventContentBytes >
+                      kMaxMessageBodyBytes + kMaxFormattedBodyBytes,
+                  "kMaxEventContentBytes must admit a maximal body + "
+                  "formatted_body, with room for the rest of the event");
+
     // Ceiling on `m.mentions.user_ids` entries in a single event. A mention is
     // a write per target plus a push-queue row per target's pusher, so an
     // unbounded list is a cheap amplification primitive. Well above any real
