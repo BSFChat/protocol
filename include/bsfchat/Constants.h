@@ -121,6 +121,39 @@ namespace event_type {
     constexpr std::string_view kServerScreenShare = "bsfchat.server.screenshare";
 } // namespace event_type
 
+// @mentions. The block on the wire is MSC3952's:
+//
+//     "m.mentions": {
+//         "user_ids": ["@alice:host", ...],
+//         "room": true,
+//         "bsfchat.role_ids": ["mod", ...]     // ours
+//     }
+//
+// Role mentions have no MSC, so the key is vendor-prefixed and lives INSIDE
+// `m.mentions` rather than beside it. Both halves of that are deliberate:
+// a spec-compliant third-party client ignores an unknown key in the block and
+// is unaffected, and keeping every mention in one object means the rules that
+// already govern the block — the server's "never recorded for an edit" rule,
+// and the client's matching notifiedMentions() rule — cover role mentions
+// without a second code path that could drift out of step with the first.
+namespace mention {
+    // Key for the role list inside the `m.mentions` object.
+    constexpr std::string_view kRoleIdsKey = "bsfchat.role_ids";
+
+    // Storage sentinels for event_mentions.user_id. A mention of N members is
+    // ONE row carrying a sentinel, never N rows — see SqliteStore's mention
+    // section for why the fan-out lives in the read and not the write.
+    //
+    // Both are unspellable as Matrix user ids, which is what stops a client
+    // claiming a broadcast by naming one in `m.mentions.user_ids`: "@room" has
+    // no ':' so UserId::parse rejects it, and a role sentinel is "@role/" plus
+    // a role id, which likewise has no ':' (role ids are validated against the
+    // roles list, and one containing ':' is refused). The send path rejects
+    // both spellings explicitly as well; this is the belt to that's braces.
+    constexpr std::string_view kRoomSentinel = "@room";
+    constexpr std::string_view kRolePrefix = "@role/";
+} // namespace mention
+
 // Message types (m.room.message msgtype field)
 namespace msg_type {
     constexpr std::string_view kText = "m.text";
@@ -226,6 +259,14 @@ namespace limits {
     // unbounded list is a cheap amplification primitive. Well above any real
     // message; a client hitting this is broken or hostile.
     constexpr size_t kMaxMentionsPerEvent = 50;
+    // Ceiling on `m.mentions.bsfchat.role_ids` entries in a single event. Far
+    // tighter than the user ceiling and for a different reason: a role mention
+    // costs ONE stored row however many members hold the role, so the write is
+    // not the amplification risk — the read is. Every recorded role sentinel
+    // widens the `user_id IN (...)` list that /sync's unread-mention query runs
+    // per member, so the cost of a silly list is paid by everyone else's sync,
+    // forever. No real message names more than a couple of roles.
+    constexpr size_t kMaxRoleMentionsPerEvent = 8;
     // Ceilings for POST /search.
     constexpr int kDefaultSearchLimit = 20;
     constexpr int kMaxSearchLimit = 100;
