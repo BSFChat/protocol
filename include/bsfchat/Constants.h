@@ -59,6 +59,36 @@ namespace api_path {
     // would eventually get skipped on one branch.
     constexpr std::string_view kSelfRoles = "/_matrix/client/v3/bsfchat/self_roles";
 
+    // Account linking: attaching an OIDC identity to the account the caller is
+    // already signed in as, so one human is one account.
+    //
+    // THE PROBLEM THESE EXIST FOR. An m.login.token sign-in derives a user id
+    // from the identity provider's `sub` claim ("@oidc_<sub>:server") and
+    // creates that account if it is missing. Nothing relates it to the local
+    // account the same person already had, so a server owner who registered
+    // with a password and later signed in through the IdP ends up owning two
+    // accounts with no connection between them — and on production, three.
+    // Roles, DMs and history do not follow the person, and the client cannot
+    // even tell the reader that the two names are one human.
+    //
+    // bsfchat.* namespaced: Matrix's own account-linking vocabulary is 3PIDs
+    // (email/MSISDN via an identity server), which is a different mechanism
+    // answering a different question, and squatting /account/3pid with
+    // something that is not a 3PID would break any spec-conformant client.
+    //
+    // POST link_identity is the write. It is authenticated TWICE over, and
+    // that is the security property: the bearer token proves control of the
+    // surviving account, and the OIDC id_token in the body proves control of
+    // the identity being attached. Neither alone is sufficient, so asserting
+    // an identity can never claim somebody else's account.
+    constexpr std::string_view kLinkIdentity =
+        "/_matrix/client/v3/bsfchat/account/link_identity";
+    // GET — the identities linked to the CALLER's own account, and nobody
+    // else's. There is no lookup by user id: "which identity provider account
+    // is @josh?" is not a question one member gets to ask about another.
+    constexpr std::string_view kLinkedIdentities =
+        "/_matrix/client/v3/bsfchat/account/linked_identities";
+
     // Parameterized paths (use fmt or string concat with room/event IDs)
     constexpr std::string_view kRoomPrefix = "/_matrix/client/v3/rooms/";
     constexpr std::string_view kMediaDownload = "/_matrix/media/v3/download/";
