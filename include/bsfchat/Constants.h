@@ -242,6 +242,18 @@ namespace limits {
     // because it is free text that every listing renders; the value is generous
     // enough for a sentence and a link, which is all it is for.
     constexpr size_t kMaxBotDescriptionLength = 512;
+    // Role definitions. The whole role list is ONE state event that every
+    // client holds in memory and every permission evaluation walks, so these
+    // are correctness bounds and not just tidiness: without them a caller with
+    // MANAGE_ROLES can grow that event without limit and make every request on
+    // the server slower for everyone.
+    constexpr size_t kMaxRoles = 250;
+    constexpr size_t kMaxRoleNameLength = 100;
+    // Positions are a ladder, not an index — they are sparse by design
+    // (0/10/100 at bootstrap) and nothing requires them to be unique or
+    // contiguous. The ceiling exists so arithmetic on them cannot be pushed
+    // anywhere near overflow, not because the range is meaningful.
+    constexpr int kMaxRolePosition = 1000000;
 } // namespace limits
 
 } // namespace bsfchat
