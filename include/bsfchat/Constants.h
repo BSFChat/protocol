@@ -58,6 +58,33 @@ namespace api_path {
     // rule, and conflating the two in one handler is how the containment rule
     // would eventually get skipped on one branch.
     constexpr std::string_view kSelfRoles = "/_matrix/client/v3/bsfchat/self_roles";
+    // One member's EFFECTIVE SERVER-SCOPE permission mask, computed by the
+    // server. GET /permissions/{userId}.
+    //
+    // bsfchat.* namespaced for the same reason everything above it is, and it is
+    // a READ-ONLY sibling of kRoles rather than a verb on it because it answers a
+    // different question. kRoles is the role DOCUMENT — what roles exist and what
+    // each one grants. This is the answer after that document has been applied to
+    // a particular member's assignments and the ADMINISTRATOR short-circuit has
+    // run. A caller that has the document still cannot answer it: it also needs
+    // that member's assignment, which /sync only ever carried as a best-effort
+    // mirror into ONE room (see RoleBootstrap::pick_server_state_mirror_room), so
+    // an integration invited into any other channel had no way to find out.
+    //
+    // Exists so that an integration asking "may this person administer me?" can
+    // ask the server rather than keep an allowlist in its own config. The
+    // alternative every bot author reaches for otherwise is to reimplement the
+    // OR-roles-then-short-circuit algorithm against mirrored state, which is the
+    // client's PermissionMath and has drifted from this repo before.
+    //
+    // SERVER scope only, and deliberately: there is no channel variant. The flags
+    // an integration needs to gate on — MANAGE_BOTS, MANAGE_SERVER, ADMINISTRATOR
+    // — are all evaluated at server scope by the endpoints that enforce them, and
+    // a per-channel answer would let this endpoint disagree with the thing it is
+    // supposed to predict. It would also make the endpoint report on the
+    // existence and override shape of channels, which is a disclosure this read
+    // has no reason to make.
+    constexpr std::string_view kPermissions = "/_matrix/client/v3/bsfchat/permissions";
 
     // Parameterized paths (use fmt or string concat with room/event IDs)
     constexpr std::string_view kRoomPrefix = "/_matrix/client/v3/rooms/";
