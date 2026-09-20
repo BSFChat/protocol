@@ -116,6 +116,20 @@ namespace api_path {
     constexpr std::string_view kLinkedIdentities =
         "/_matrix/client/v3/bsfchat/account/linked_identities";
 
+    // The channel directory: every channel on this server that the CALLER is
+    // allowed to see, member or not.
+    //
+    // bsfchat.* namespaced for the same reason the four above are, and
+    // pointedly NOT Matrix's /publicRooms. That endpoint answers "which rooms
+    // has this server published in its room directory", a flag on the room;
+    // this one answers "which channels may THIS caller be told about", which is
+    // a per-caller VIEW_CHANNEL evaluation. Serving the latter from the former
+    // path would hand a spec-shaped name to a non-spec answer, and the first
+    // client to trust the name would enumerate every private channel on the
+    // server — `visibility` is "public" on every channel here, including the
+    // private ones (docs/membership-vs-visibility.md).
+    constexpr std::string_view kChannelDirectory = "/_matrix/client/v3/bsfchat/channels";
+
     // Parameterized paths (use fmt or string concat with room/event IDs)
     constexpr std::string_view kRoomPrefix = "/_matrix/client/v3/rooms/";
     constexpr std::string_view kMediaDownload = "/_matrix/media/v3/download/";
@@ -177,6 +191,26 @@ namespace event_type {
     // to clamp users' locally-chosen quality downward.
     constexpr std::string_view kServerScreenShare = "bsfchat.server.screenshare";
 } // namespace event_type
+
+// The `type` field of a `bsfchat.room.type` state event, and the same strings
+// as they appear in the channel directory's `type`.
+//
+// Promoted here from the three string literals the server spelled by hand
+// (RoomHandler's create path, RoomVisibility's category predicate, SyncEngine's
+// stub rule) because the directory puts them ON THE WIRE as a contract a bot
+// author switches on. A wire value with no name is a wire value that gets
+// misspelled on one of the two sides.
+//
+// The existing server call sites still spell their literals; they are not
+// rewritten here so this change stays a pure addition. That is a follow-up, not
+// a difference of opinion about where the constant lives.
+namespace room_type {
+    constexpr std::string_view kText = "text";
+    constexpr std::string_view kVoice = "voice";
+    // A sidebar container, not a channel: it holds no messages and its children
+    // name it as their parent.
+    constexpr std::string_view kCategory = "category";
+} // namespace room_type
 
 // @mentions. The block on the wire is MSC3952's:
 //
