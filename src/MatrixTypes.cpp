@@ -587,7 +587,8 @@ void to_json(nlohmann::json& j, const ServerRole& r) {
         {"position", r.position},
         {"permissions", permission::flags_to_hex(r.permissions)},
         {"mentionable", r.mentionable},
-        {"hoist", r.hoist}
+        {"hoist", r.hoist},
+        {"self_assignable", r.self_assignable}
     };
     // Legacy
     if (r.level != 0) j["level"] = r.level;
@@ -608,6 +609,10 @@ void from_json(const nlohmann::json& j, ServerRole& r) {
     }
     r.mentionable = j.value("mentionable", false);
     r.hoist = j.value("hoist", false);
+    // Absent on every event written before this field existed, and false is the
+    // only safe default: a role nobody marked opt-in must not become opt-in
+    // because an old server wrote the event.
+    r.self_assignable = j.value("self_assignable", false);
     r.level = j.value("level", 0);
     // Fallback: if role has no explicit id but has a name, derive a stable id.
     if (r.id.empty() && !r.name.empty()) r.id = r.name;

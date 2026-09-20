@@ -283,6 +283,20 @@ struct ServerRole {
     std::uint64_t permissions = 0; // bitfield, serialized as hex string
     bool mentionable = false;
     bool hoist = false;         // show members with this role separately in the sidebar
+    // Any member may add this role to themselves, and remove it again, without
+    // holding MANAGE_ROLES and without anyone outranking anyone. This is what
+    // makes an opt-in role picker ("which announcements do you want pinged
+    // for?") possible: the rank rules that govern every other role change are
+    // unsatisfiable for an ordinary member, who sits at position 0 and can
+    // therefore be granted nothing.
+    //
+    // A role wearing this flag is CONSTRAINED, not merely convenient. The
+    // server refuses to store one whose permission bits are not a subset of
+    // @everyone's, and refuses to hand one out at claim time if that ever
+    // stops holding — see server/src/api/RoleHandler.cpp. Nothing here
+    // enforces that; a client must not assume a self-assignable role it reads
+    // off the wire is safe to render as harmless without checking its bits.
+    bool self_assignable = false;
     // Legacy — kept so older events still parse. Unused by new code.
     int level = 0;
 };

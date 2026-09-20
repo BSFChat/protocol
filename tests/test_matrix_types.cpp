@@ -334,3 +334,39 @@ TEST(MessagesResponse, RoundTrip) {
     EXPECT_EQ(parsed.end, "t2");
     EXPECT_EQ(parsed.chunk.size(), 1u);
 }
+
+// A role event written before `self_assignable` existed must parse as NOT
+// self-assignable. The field is the whole authority for "any member may take
+// this", so a missing key defaulting the other way would make every role on
+// every upgraded deployment claimable by everyone at once.
+TEST(ServerRoleSerialization, SelfAssignableDefaultsFalseWhenAbsent) {
+    json legacy = {
+        {"id", "mod"}, {"name", "Moderator"}, {"color", "#43b581"},
+        {"position", 10}, {"permissions", "0x1f"}, {"hoist", true}
+    };
+    ServerRole parsed;
+    from_json(legacy, parsed);
+    EXPECT_FALSE(parsed.self_assignable);
+    EXPECT_EQ(parsed.position, 10);
+}
+
+// And it survives a round trip, in both states, so a role edit that leaves the
+// flag alone cannot silently clear it.
+TEST(ServerRoleSerialization, SelfAssignableRoundTrips) {
+    for (bool flag : {false, true}) {
+        ServerRole r;
+        r.id = "notify-boss";
+        r.name = "Boss pings";
+        r.position = 1;
+        r.permissions = 0;
+        r.self_assignable = flag;
+
+        json j;
+        to_json(j, r);
+        EXPECT_EQ(j["self_assignable"], flag);
+
+        ServerRole back;
+        from_json(j, back);
+        EXPECT_EQ(back.self_assignable, flag);
+    }
+}

@@ -34,6 +34,30 @@ namespace api_path {
     // everything else a bot does goes through the normal routes and the normal
     // bearer-token middleware.
     constexpr std::string_view kBots = "/_matrix/client/v3/bsfchat/bots";
+    // Server role definitions: list, create, edit, delete, reposition.
+    //
+    // bsfchat.* namespaced for the same reason the three above are — Matrix has
+    // no role model, only m.room.power_levels, which this server does not use as
+    // its authority.
+    //
+    // These endpoints do not introduce a second home for role data. The
+    // authoritative copy is still the `bsfchat.server.roles` server-scoped state
+    // event, and every write here is a read-modify-write of that one document
+    // performed BY THE SERVER, checked by the same
+    // PermissionsEngine::may_edit_role_definitions that guards the wholesale
+    // PUT. What they remove is the requirement that the CALLER assemble the
+    // whole document, which is what made roles unusable from a bot: a delegated
+    // MANAGE_ROLES holder cannot faithfully echo back role definitions it is not
+    // allowed to touch, and two editors racing on a wholesale PUT silently lose
+    // one of the two edits.
+    constexpr std::string_view kRoles = "/_matrix/client/v3/bsfchat/roles";
+    // Roles the CALLER may add to or remove from themselves. PUT/DELETE
+    // /self_roles/{roleId}. Separate path rather than a verb on kRoles because
+    // the authority is completely different: kRoles is MANAGE_ROLES plus rank,
+    // this is "the role says anyone may take it" plus a permission-containment
+    // rule, and conflating the two in one handler is how the containment rule
+    // would eventually get skipped on one branch.
+    constexpr std::string_view kSelfRoles = "/_matrix/client/v3/bsfchat/self_roles";
 
     // Parameterized paths (use fmt or string concat with room/event IDs)
     constexpr std::string_view kRoomPrefix = "/_matrix/client/v3/rooms/";
@@ -218,6 +242,18 @@ namespace limits {
     // because it is free text that every listing renders; the value is generous
     // enough for a sentence and a link, which is all it is for.
     constexpr size_t kMaxBotDescriptionLength = 512;
+    // Role definitions. The whole role list is ONE state event that every
+    // client holds in memory and every permission evaluation walks, so these
+    // are correctness bounds and not just tidiness: without them a caller with
+    // MANAGE_ROLES can grow that event without limit and make every request on
+    // the server slower for everyone.
+    constexpr size_t kMaxRoles = 250;
+    constexpr size_t kMaxRoleNameLength = 100;
+    // Positions are a ladder, not an index — they are sparse by design
+    // (0/10/100 at bootstrap) and nothing requires them to be unique or
+    // contiguous. The ceiling exists so arithmetic on them cannot be pushed
+    // anywhere near overflow, not because the range is meaningful.
+    constexpr int kMaxRolePosition = 1000000;
 } // namespace limits
 
 } // namespace bsfchat
