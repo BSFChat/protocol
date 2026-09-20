@@ -15,6 +15,7 @@ add_executable(protocol_tests
     test_matrix_types.cpp
     test_jwt.cpp
     test_error_codes.cpp
+    test_permissions.cpp
 )
 
 target_link_libraries(protocol_tests PRIVATE

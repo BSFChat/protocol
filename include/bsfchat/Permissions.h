@@ -1,7 +1,10 @@
 #pragma once
 
+#include <bsfchat/Constants.h>
+
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace bsfchat {
@@ -93,6 +96,49 @@ constexpr Flags kAllFlags =
 
 inline bool has(Flags flags, Flags p) {
     return (flags & p) == p;
+}
+
+// Does the implicit @everyone role apply to this account?
+//
+// @everyone is the default role FOR PEOPLE WHO JOIN THE SERVER. A permission
+// evaluation applies it to an account whether or not the account's assignment
+// names it, which is what makes it a default rather than a role — and for a bot
+// that default is the wrong one. A bot is not somebody who joined; it is an
+// account an administrator manufactured for one job, and it is already excluded
+// from the other two things joining confers: it cannot log in with a password,
+// and it is excluded from channel auto-join. The implicit default role is the
+// third exclusion, and it is the one with consequences.
+//
+// Concretely: kEveryoneDefault is VIEW_CHANNEL | SEND_MESSAGES on a typical
+// server, so a bot minted to answer questions in one channel could read and post
+// in EVERY channel on the server the moment it let itself into them — and no
+// role assignment could narrow that, because a role only ever ADDS bits. There
+// is no assignment, on any account, that subtracts something @everyone already
+// grants. So "this bot may see these three channels and nothing else" was not a
+// sentence the permission model could say at all, however it was configured.
+//
+// Withholding the implicit grant makes @everyone ORDINARY for a bot: still a
+// role, still assignable by id like any other. "Let this bot do whatever a
+// member can" stays available — it just has to be said on purpose, rather than
+// being what an operator gets for saying nothing. A per-channel override keyed
+// `user:<bot id>` then grants the channels it is actually for, which is the same
+// mechanism that makes a channel private for a person.
+//
+// Note what this does NOT change: the @everyone channel OVERRIDE still applies
+// to a bot, because an override is a statement about a CHANNEL ("this one is
+// open to everybody") rather than about who holds which role — the same reason
+// compute() applies it unconditionally today.
+//
+// KEYED ON THE USER ID, not on a database lookup, and safe to be: the `bot_`
+// namespace is closed on every path that can create an account — registration
+// refuses the prefix outright, the OIDC auto-create path mints `oidc_`
+// localparts, and bot creation refuses a localpart outside it. So a real bot
+// always classifies as one, which is the direction that matters here. The
+// failure this must not have is a bot quietly keeping the default; a human who
+// somehow held a `bot_` id would instead lose it, which is visible immediately
+// and grants nobody anything.
+constexpr bool inherits_everyone_role(std::string_view user_id) {
+    return !bot::is_bot_user_id(user_id);
 }
 
 // Well-known role IDs seeded at server bootstrap.
