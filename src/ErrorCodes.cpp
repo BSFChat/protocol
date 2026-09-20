@@ -5,6 +5,11 @@ namespace bsfchat {
 nlohmann::json MatrixError::to_json() const {
     nlohmann::json j = {{"errcode", errcode}, {"error", error}};
     if (retry_after_ms > 0) j["retry_after_ms"] = retry_after_ms;
+    // Omitted when empty rather than written as "". A client that reads the
+    // key has to be able to treat "absent" as "this server does not say", and
+    // an empty string is a value that would compare unequal to every reason
+    // while still being present.
+    if (!reason.empty()) j[std::string(refusal::kField)] = reason;
     return j;
 }
 
@@ -12,11 +17,17 @@ MatrixError MatrixError::from_json(const nlohmann::json& j) {
     return {
         .errcode = j.at("errcode").get<std::string>(),
         .error = j.value("error", ""),
+        // Absent on every error from a server older than this field, and on
+        // every refusal that does not classify itself. Empty then, which is
+        // the "fall back to the sentence" signal.
+        .reason = j.value(std::string(refusal::kField), ""),
     };
 }
 
-MatrixError MatrixError::forbidden(const std::string& msg) {
-    return {.errcode = std::string(error_code::kForbidden), .error = msg};
+MatrixError MatrixError::forbidden(const std::string& msg, std::string_view reason) {
+    return {.errcode = std::string(error_code::kForbidden),
+            .error = msg,
+            .reason = std::string(reason)};
 }
 
 MatrixError MatrixError::unknown_token(const std::string& msg) {
