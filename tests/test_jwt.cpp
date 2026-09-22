@@ -313,3 +313,88 @@ TEST(LiveKitToken, RejectsJoinOrAdminGrantWithoutRoomName) {
     EXPECT_THROW(livekit_token_sign(kKey, kSecret, "@a:test", "", admin_no_room, 600, 1000),
                  std::invalid_argument);
 }
+
+// ---------------------------------------------------------------------------
+// Audience binding (identity audit 2026-09, finding C1).
+//
+// The client, the identity provider and every chat server each spell a chat
+// server's URL independently and jwt-cpp compares audiences byte for byte, so
+// the canonical form is the contract between three repositories. These pin it.
+// ---------------------------------------------------------------------------
+
+TEST(AudienceUrl, CanonicalisesCaseDefaultPortAndTrailingSlash) {
+    EXPECT_EQ(canonical_audience_url("https://chat.example"), "https://chat.example");
+    EXPECT_EQ(canonical_audience_url("HTTPS://Chat.Example:443/"), "https://chat.example");
+    EXPECT_EQ(canonical_audience_url("https://chat.example:8448//"), "https://chat.example:8448");
+    EXPECT_EQ(canonical_audience_url("http://localhost:80"), "http://localhost");
+    EXPECT_EQ(canonical_audience_url("http://localhost:08448"), "http://localhost:8448");
+    EXPECT_EQ(canonical_audience_url("https://example.com/Chat/"), "https://example.com/Chat");
+    EXPECT_EQ(canonical_audience_url("https://[::1]:8448"), "https://[::1]:8448");
+    EXPECT_EQ(canonical_audience_url("https://[2001:DB8::1]/"), "https://[2001:db8::1]");
+}
+
+TEST(AudienceUrl, RefusesEverySpellingThatCouldNameTwoServers) {
+    for (const char* bad : {
+             "",                                        // nothing
+             "chat.example",                            // not absolute
+             "//chat.example",                          // scheme-relative
+             "ftp://chat.example",                      // not http(s)
+             "https://",                                // no host
+             "https://real.example@evil.example",       // userinfo smuggling
+             "https://chat.example?x=1",                // query
+             "https://chat.example#frag",               // fragment
+             "https://chat.example./",                  // trailing dot: a second spelling
+             "https://chat..example",                   // empty label
+             "https://-chat.example",                   // label edge hyphen
+             "https://chat.example:0",                  // port 0
+             "https://chat.example:65536",              // port out of range
+             "https://chat.example:",                   // empty port
+             "https://chat.example:44a",                // non-numeric port
+             "https://chat.example/a/../b",             // dot segment
+             "https://chat.example/a//b",               // empty segment
+             "https://chat.example/%41",                // percent escape
+             "https://chat.example /",                  // space
+             "https://chat.ex\xc3\xa4mple",             // non-ASCII (IDN must be punycode)
+             "https://[fe80::1%25en0]",                 // IPv6 zone id
+             "https://[::1",                            // unclosed literal
+         }) {
+        EXPECT_FALSE(canonical_audience_url(bad).has_value()) << "accepted: " << bad;
+    }
+}
+
+TEST(AudienceUrl, OnlyHttpsOrLoopbackHttpIsSecure) {
+    EXPECT_TRUE(audience_url_is_secure("https://chat.example"));
+    EXPECT_TRUE(audience_url_is_secure("http://localhost:8448"));
+    EXPECT_TRUE(audience_url_is_secure("http://127.0.0.1:8448"));
+    EXPECT_TRUE(audience_url_is_secure("http://127.3.2.1"));
+    EXPECT_TRUE(audience_url_is_secure("http://[::1]:8448"));
+    EXPECT_FALSE(audience_url_is_secure("http://chat.example"));
+    EXPECT_FALSE(audience_url_is_secure("http://10.0.141.142:8448"));
+    EXPECT_FALSE(audience_url_is_secure("http://127.evil.example"));
+    EXPECT_FALSE(audience_url_is_secure("http://127.0.0.1.evil.example"));
+    EXPECT_FALSE(audience_url_is_secure("http://localhost.evil.example"));
+    EXPECT_FALSE(audience_url_is_secure("http://127.0.0.256"));
+}
+
+TEST_F(JwtTest, AzpAndNonceRoundTrip) {
+    JwtClaims claims;
+    claims.sub = "user-123";
+    claims.iss = "https://id.example";
+    claims.aud = "https://chat.example";
+    claims.iat = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    claims.exp = claims.iat + 300;
+    claims.azp = "bsfchat-desktop";
+    claims.nonce = "n-0S6_WzA2Mj";
+
+    auto token = jwt_sign(claims, private_key, "key-1");
+    auto verified = jwt_verify(token, public_key, "https://id.example", "https://chat.example");
+    ASSERT_TRUE(verified.has_value());
+    EXPECT_EQ(verified->aud, "https://chat.example");
+    EXPECT_EQ(verified->azp, "bsfchat-desktop");
+    EXPECT_EQ(verified->nonce, "n-0S6_WzA2Mj");
+
+    // The audience a chat server asserts is its own URL: a token for another
+    // server, or one carrying only the legacy client_id audience, is refused.
+    EXPECT_FALSE(jwt_verify(token, public_key, "https://id.example", "https://other.example"));
+    EXPECT_FALSE(jwt_verify(token, public_key, "https://id.example", "bsfchat-desktop"));
+}

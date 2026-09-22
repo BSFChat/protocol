@@ -55,6 +55,8 @@ std::string jwt_sign(
     if (claims.name) token.set_payload_claim("name", jwt::claim(std::string(*claims.name)));
     if (claims.email) token.set_payload_claim("email", jwt::claim(std::string(*claims.email)));
     if (claims.picture) token.set_payload_claim("picture", jwt::claim(std::string(*claims.picture)));
+    if (claims.azp) token.set_payload_claim("azp", jwt::claim(std::string(*claims.azp)));
+    if (claims.nonce) token.set_payload_claim("nonce", jwt::claim(std::string(*claims.nonce)));
 
     return token.sign(jwt::algorithm::rs256("", pem_private_key));
 }
@@ -108,11 +110,189 @@ std::optional<JwtClaims> jwt_verify(
         if (decoded.has_payload_claim("picture")) {
             claims.picture = decoded.get_payload_claim("picture").as_string();
         }
+        if (decoded.has_payload_claim("azp")) {
+            claims.azp = decoded.get_payload_claim("azp").as_string();
+        }
+        if (decoded.has_payload_claim("nonce")) {
+            claims.nonce = decoded.get_payload_claim("nonce").as_string();
+        }
 
         return claims;
     } catch (...) {
         return std::nullopt;
     }
+}
+
+namespace {
+
+bool is_ascii_digit(char c) { return c >= '0' && c <= '9'; }
+bool is_ascii_alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+char ascii_lower(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
+
+// A DNS name or IPv4 literal, already lower-cased: labels of [a-z0-9-], none
+// empty, none starting or ending with '-'. Deliberately narrower than what a
+// resolver accepts — an IDN arrives here as its punycode A-label, which is
+// what the address bar, TLS and the chat server's own config all use.
+bool host_is_acceptable(std::string_view host) {
+    if (host.empty() || host.size() > 253) return false;
+    size_t label_start = 0;
+    for (size_t i = 0; i <= host.size(); ++i) {
+        if (i == host.size() || host[i] == '.') {
+            const size_t len = i - label_start;
+            if (len == 0 || len > 63) return false;  // empty label, incl. trailing dot
+            if (host[label_start] == '-' || host[i - 1] == '-') return false;
+            label_start = i + 1;
+            continue;
+        }
+        const char c = host[i];
+        if (!(is_ascii_digit(c) || (c >= 'a' && c <= 'z') || c == '-')) return false;
+    }
+    return true;
+}
+
+bool ipv6_literal_is_acceptable(std::string_view inner) {
+    // Contents of "[...]". Hex digits, ':' and '.' (for an embedded IPv4
+    // tail). A zone id ("%25en0") is refused: it names an interface on the
+    // machine doing the parsing, which is meaningless as an audience.
+    if (inner.size() < 2 || inner.find(':') == std::string_view::npos) return false;
+    for (char c : inner) {
+        const bool hex = is_ascii_digit(c) || (c >= 'a' && c <= 'f');
+        if (!(hex || c == ':' || c == '.')) return false;
+    }
+    return true;
+}
+
+bool path_char_is_acceptable(char c) {
+    // RFC 3986 unreserved plus '/'. No '%': an escaped and an unescaped
+    // spelling of one path would otherwise be two audiences.
+    return is_ascii_alpha(c) || is_ascii_digit(c) || c == '-' || c == '.' || c == '_' ||
+           c == '~' || c == '/';
+}
+
+} // namespace
+
+std::optional<std::string> canonical_audience_url(std::string_view url) {
+    if (url.empty() || url.size() > 512) return std::nullopt;
+    for (char c : url) {
+        // Controls, space, DEL and anything non-ASCII: none of them belong in
+        // an audience, and each is a way to make two strings that render alike.
+        if (static_cast<unsigned char>(c) <= 0x20 || static_cast<unsigned char>(c) >= 0x7f) {
+            return std::nullopt;
+        }
+    }
+
+    const auto sep = url.find("://");
+    if (sep == std::string_view::npos) return std::nullopt;
+    std::string scheme;
+    for (char c : url.substr(0, sep)) scheme += ascii_lower(c);
+    if (scheme != "https" && scheme != "http") return std::nullopt;
+
+    std::string_view rest = url.substr(sep + 3);
+    if (rest.find_first_of("?#") != std::string_view::npos) return std::nullopt;
+
+    const auto slash = rest.find('/');
+    std::string_view authority = rest.substr(0, slash);
+    std::string_view path = slash == std::string_view::npos ? std::string_view{} : rest.substr(slash);
+
+    if (authority.empty() || authority.find('@') != std::string_view::npos) return std::nullopt;
+
+    std::string authority_lower;
+    for (char c : authority) authority_lower += ascii_lower(c);
+    std::string_view auth = authority_lower;
+
+    std::string host;
+    std::string_view port_str;
+    if (auth.front() == '[') {
+        const auto close = auth.find(']');
+        if (close == std::string_view::npos) return std::nullopt;
+        if (!ipv6_literal_is_acceptable(auth.substr(1, close - 1))) return std::nullopt;
+        host = std::string(auth.substr(0, close + 1));
+        std::string_view after = auth.substr(close + 1);
+        if (!after.empty()) {
+            if (after.front() != ':') return std::nullopt;
+            port_str = after.substr(1);
+            if (port_str.empty()) return std::nullopt;
+        }
+    } else {
+        const auto colon = auth.find(':');
+        host = std::string(auth.substr(0, colon));
+        if (colon != std::string_view::npos) {
+            port_str = auth.substr(colon + 1);
+            if (port_str.empty()) return std::nullopt;
+        }
+        if (!host_is_acceptable(host)) return std::nullopt;
+    }
+
+    std::string port;
+    if (!port_str.empty()) {
+        if (port_str.size() > 5) return std::nullopt;
+        uint32_t value = 0;
+        for (char c : port_str) {
+            if (!is_ascii_digit(c)) return std::nullopt;
+            value = value * 10 + static_cast<uint32_t>(c - '0');
+        }
+        if (value == 0 || value > 65535) return std::nullopt;
+        const bool is_default = (scheme == "https" && value == 443) || (scheme == "http" && value == 80);
+        if (!is_default) port = std::to_string(value);  // also drops leading zeros
+    }
+
+    // Trailing slashes carry no meaning for a base URL; everything else in
+    // the path must already be in its one canonical spelling.
+    while (!path.empty() && path.back() == '/') path.remove_suffix(1);
+    if (!path.empty()) {
+        for (char c : path) {
+            if (!path_char_is_acceptable(c)) return std::nullopt;
+        }
+        size_t pos = 1;  // path[0] is '/'
+        while (pos <= path.size()) {
+            auto next = path.find('/', pos);
+            if (next == std::string_view::npos) next = path.size();
+            std::string_view segment = path.substr(pos, next - pos);
+            if (segment.empty() || segment == "." || segment == "..") return std::nullopt;
+            pos = next + 1;
+        }
+    }
+
+    std::string out = scheme + "://" + host;
+    if (!port.empty()) out += ":" + port;
+    out += path;
+    return out;
+}
+
+bool audience_url_is_secure(std::string_view canonical_url) {
+    if (canonical_url.starts_with("https://")) return true;
+    if (!canonical_url.starts_with("http://")) return false;
+    std::string_view rest = canonical_url.substr(7);
+    std::string_view host;
+    if (rest.starts_with("[")) {
+        host = rest.substr(0, rest.find(']') == std::string_view::npos ? 0 : rest.find(']') + 1);
+    } else {
+        host = rest.substr(0, rest.find_first_of(":/"));
+    }
+    if (host == "localhost" || host == "[::1]") return true;
+    // 127.0.0.0/8, written as a dotted quad. host_is_acceptable() has
+    // already limited it to [a-z0-9.-], so a "127." prefix plus three more
+    // all-digit labels is an IPv4 loopback literal and nothing else.
+    if (host.starts_with("127.")) {
+        int labels = 0;
+        size_t start = 0;
+        for (size_t i = 0; i <= host.size(); ++i) {
+            if (i == host.size() || host[i] == '.') {
+                std::string_view label = host.substr(start, i - start);
+                if (label.empty() || label.size() > 3) return false;
+                int value = 0;
+                for (char c : label) {
+                    if (!is_ascii_digit(c)) return false;
+                    value = value * 10 + (c - '0');
+                }
+                if (value > 255) return false;
+                ++labels;
+                start = i + 1;
+            }
+        }
+        return labels == 4;
+    }
+    return false;
 }
 
 std::string livekit_token_sign(

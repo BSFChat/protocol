@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <chrono>
 
@@ -14,13 +15,60 @@ namespace bsfchat {
 struct JwtClaims {
     std::string sub;       // subject (user ID)
     std::string iss;       // issuer (identity service URL)
-    std::string aud;       // audience (chat server client_id)
+    // Audience. For an id_token that a chat server will accept as a sign-in
+    // credential this is the chat server's own public URL, in the form
+    // canonical_audience_url() produces — NOT the OAuth client_id.
+    //
+    // It used to be the client_id ("bsfchat-desktop") for every token, which
+    // made one id_token a sign-in credential on every chat server trusting the
+    // same provider: a hostile server that received a user's token at sign-in
+    // could replay it anywhere else (identity audit 2026-09, finding C1). The
+    // client now names the server it is signing in to as an RFC 8707
+    // `resource`, the provider puts that here, and each chat server requires
+    // its own URL.
+    std::string aud;
     int64_t iat = 0;       // issued at (unix timestamp)
     int64_t exp = 0;       // expiry (unix timestamp)
     std::optional<std::string> name;
     std::optional<std::string> email;
     std::optional<std::string> picture;
+    // Authorized party (OIDC Core 2): the OAuth client the token was issued
+    // to. Once `aud` names the chat server rather than the client, this is
+    // where the client_id lives.
+    std::optional<std::string> azp;
+    // OIDC Core 3.1.2.1 nonce, echoed from the authorization request. The
+    // desktop client checks it against the value it generated for that
+    // attempt; a chat server uses it to refuse a second presentation of the
+    // same token.
+    std::optional<std::string> nonce;
 };
+
+// Canonical form of a URL used as a token audience (an RFC 8707 resource
+// indicator naming a chat server). Three parties spell the same server
+// independently — the client from the address it connects to, the identity
+// provider when it writes `aud`, the chat server from its own configuration —
+// and jwt-cpp compares audiences byte for byte, so all three must pass
+// through this one function or a correctly configured deployment fails
+// closed on "https://Chat.Example:443/" versus "https://chat.example".
+//
+//   scheme      http or https, lower-cased
+//   host        lower-cased; a DNS name, an IPv4 literal or a bracketed IPv6
+//               literal. No userinfo ("https://real.example@evil.example" is
+//               a classic confusion), no trailing dot, no empty labels.
+//   port        dropped when it is the scheme's default, else kept (1-65535)
+//   path        kept, minus trailing slashes; "." and ".." segments, empty
+//               segments and percent-escapes are refused rather than
+//               normalised, so there is exactly one spelling of a path
+//   query/frag  refused
+//
+// Returns nullopt for anything else. Purely syntactic: whether an http URL is
+// acceptable is policy, decided by the caller (see audience_url_is_secure).
+std::optional<std::string> canonical_audience_url(std::string_view url);
+
+// True when a CANONICAL audience URL is https, or http to a loopback host
+// (localhost, 127.0.0.0/8, [::1]) for development. The identity provider
+// refuses to mint a token for anything else.
+bool audience_url_is_secure(std::string_view canonical_url);
 
 // Create a signed JWT using RS256.
 // pem_private_key: RSA private key in PEM format.
