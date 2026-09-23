@@ -218,6 +218,19 @@ void to_json(nlohmann::json& j, const SyncResponse& r) {
             room_json["ephemeral"] = ephemeral;
         }
 
+        // Room account data — m.fully_read, the reader's own read marker.
+        // Written only when there is some, so a room with no marker sends
+        // exactly the bytes it always did.
+        if (!room.account_data.empty()) {
+            nlohmann::json account_data;
+            account_data["events"] = nlohmann::json::array();
+            for (const auto& event : room.account_data) {
+                account_data["events"].push_back(
+                    nlohmann::json{{"type", event.type}, {"content", event.content}});
+            }
+            room_json["account_data"] = std::move(account_data);
+        }
+
         // Unread counters. `notification_count` is every unread message from
         // someone else; `highlight_count` is the @-mention subset, so a client
         // can show a mention badge distinct from the plain unread dot. Both
@@ -269,11 +282,26 @@ void to_json(nlohmann::json& j, const SyncResponse& r) {
         j["presence"] = presence;
     }
 
-    // Top-level account_data. m.direct is the only event we carry.
-    if (r.direct_rooms) {
-        j["account_data"] = {{"events", nlohmann::json::array({
-            {{"type", std::string(event_type::kDirect)}, {"content", *r.direct_rooms}},
-        })}};
+    // Top-level (global) account data. ONE array carrying two things that
+    // reach it by different routes: the stored documents that changed within
+    // this response's range, and m.direct, which is derived from
+    // rooms.is_direct and restated rather than stored. A client reading
+    // `account_data.events` cannot tell them apart and has no reason to.
+    //
+    // m.direct is written LAST so that it wins if an account somehow also has
+    // a stored document of that type — the derived answer is the true one,
+    // since it is what every other part of this server acts on.
+    if (!r.account_data.empty() || r.direct_rooms) {
+        auto events = nlohmann::json::array();
+        for (const auto& event : r.account_data) {
+            if (event.type == event_type::kDirect) continue;
+            events.push_back(nlohmann::json{{"type", event.type}, {"content", event.content}});
+        }
+        if (r.direct_rooms) {
+            events.push_back(nlohmann::json{{"type", std::string(event_type::kDirect)},
+                                            {"content", *r.direct_rooms}});
+        }
+        j["account_data"] = {{"events", std::move(events)}};
     }
 }
 
@@ -313,6 +341,21 @@ void from_json(const nlohmann::json& j, SyncResponse& r) {
                     RoomEvent ev;
                     from_json(ev_json, ev);
                     room.ephemeral->events.push_back(std::move(ev));
+                }
+            }
+
+            // Room account data. Parsed leniently, entry by entry, for the
+            // reason the m.direct parser below is: one malformed document
+            // must not cost the client the rest of the sync.
+            if (room_json.contains("account_data")
+                && room_json["account_data"].contains("events")
+                && room_json["account_data"]["events"].is_array()) {
+                for (const auto& ev : room_json["account_data"]["events"]) {
+                    if (!ev.is_object()) continue;
+                    if (!ev.contains("type") || !ev["type"].is_string()) continue;
+                    if (!ev.contains("content") || !ev["content"].is_object()) continue;
+                    room.account_data.push_back(
+                        AccountDataEvent{ev["type"].get<std::string>(), ev["content"]});
                 }
             }
 
@@ -359,13 +402,23 @@ void from_json(const nlohmann::json& j, SyncResponse& r) {
         if (!pe.events.empty()) r.presence = std::move(pe);
     }
 
-    // m.direct out of top-level account_data. Parsed by hand and leniently:
-    // account-data events have no sender, so they are not RoomEvents, and a
-    // malformed entry must not cost the client the whole sync.
-    if (j.contains("account_data") && j["account_data"].contains("events")) {
+    // Top-level account data. Parsed by hand and leniently: account-data
+    // events have no sender, so they are not RoomEvents, and a malformed entry
+    // must not cost the client the whole sync.
+    //
+    // Every well-formed entry lands in `account_data`, m.direct included — a
+    // client that wants the raw document should not have to know which types
+    // this parser happens to understand. m.direct is ALSO parsed into
+    // `direct_rooms` below, which is where every existing reader of it looks.
+    if (j.contains("account_data") && j["account_data"].contains("events")
+        && j["account_data"]["events"].is_array()) {
         for (const auto& ev : j["account_data"]["events"]) {
-            if (!ev.is_object() || ev.value("type", "") != event_type::kDirect) continue;
+            if (!ev.is_object()) continue;
+            if (!ev.contains("type") || !ev["type"].is_string()) continue;
             if (!ev.contains("content") || !ev["content"].is_object()) continue;
+            r.account_data.push_back(
+                AccountDataEvent{ev["type"].get<std::string>(), ev["content"]});
+            if (ev["type"].get<std::string>() != event_type::kDirect) continue;
             std::map<std::string, std::vector<std::string>> direct;
             for (const auto& [peer, rooms] : ev["content"].items()) {
                 if (!rooms.is_array()) continue;

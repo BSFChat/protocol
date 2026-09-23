@@ -150,6 +150,14 @@ namespace event_type {
     constexpr std::string_view kRoomMessage = "m.room.message";
     // Account data, not a room event: the user's peer -> DM room ids map.
     constexpr std::string_view kDirect = "m.direct";
+    // ROOM account data, not a room event: how far this reader has read in
+    // this room. Matrix's own type, so a conventional client finds its read
+    // marker where it expects to. See `fully_read` below for the content.
+    constexpr std::string_view kFullyRead = "m.fully_read";
+    // Global account data: the reader's block list. Named here because /sync
+    // now carries account data and the two ends have to agree on the string;
+    // the server's own copy is server/src/store/SqliteStore.h.
+    constexpr std::string_view kIgnoredUserList = "m.ignored_user_list";
     constexpr std::string_view kRoomJoinRules = "m.room.join_rules";
     constexpr std::string_view kRoomPowerLevels = "m.room.power_levels";
     constexpr std::string_view kRoomCanonicalAlias = "m.room.canonical_alias";
@@ -191,6 +199,27 @@ namespace event_type {
     // to clamp users' locally-chosen quality downward.
     constexpr std::string_view kServerScreenShare = "bsfchat.server.screenshare";
 } // namespace event_type
+
+// The content of an `m.fully_read` room account-data document.
+//
+// `event_id` is the spec's whole story: the marker names an event, and a
+// client is expected to already know where that event sits.
+//
+// THIS CLIENT DOES NOT. Its unread dot is arithmetic on origin_server_ts
+// (client/src/core/ReadState.h) and the event the marker names is very often
+// one it has never loaded — a phone read the room, the desktop has a sidebar
+// row for it and no timeline. Resolving the id would mean a /messages request
+// per room per marker, on the one endpoint a client polls continuously, to
+// recover a number the server already had in its hand when it wrote the row.
+//
+// So the timestamp travels beside the id, under a bsfchat.* key because it is
+// not the spec's. Both are written; a client that knows only the spec reads
+// `event_id` and ignores the rest, and this one reads the timestamp and never
+// has to ask.
+namespace fully_read {
+    constexpr std::string_view kEventId = "event_id";
+    constexpr std::string_view kOriginServerTs = "bsfchat.origin_server_ts";
+} // namespace fully_read
 
 // The `type` field of a `bsfchat.room.type` state event, and the same strings
 // as they appear in the channel directory's `type`.

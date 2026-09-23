@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "bsfchat/Constants.h"
 #include "bsfchat/MatrixTypes.h"
 
 using namespace bsfchat;
@@ -369,4 +370,112 @@ TEST(ServerRoleSerialization, SelfAssignableRoundTrips) {
         from_json(j, back);
         EXPECT_EQ(back.self_assignable, flag);
     }
+}
+
+// ── Account data ─────────────────────────────────────────────────────────
+
+// Global account data goes out beside m.direct in the one `account_data`
+// array, and comes back as documents. The whole point of the section is that
+// a second device learns about a write it did not make, so the content has to
+// survive the trip unaltered — including keys this protocol has never heard
+// of, since account data is a store the CLIENT owns.
+TEST(SyncResponse, GlobalAccountDataRoundTrips) {
+    SyncResponse sync;
+    sync.next_batch = "s1";
+    sync.account_data.push_back(
+        {"m.ignored_user_list",
+         json{{"ignored_users", {{"@spammer:example.com", json::object()}}},
+              {"some.future.key", 7}}});
+    sync.direct_rooms.emplace()["@bob:example.com"] = {"!dm:example.com"};
+
+    json j;
+    to_json(j, sync);
+    ASSERT_EQ(j["account_data"]["events"].size(), 2u);
+
+    SyncResponse parsed;
+    from_json(j, parsed);
+    // m.direct reaches BOTH: the raw document list, and direct_rooms, where
+    // every existing reader of it looks.
+    ASSERT_EQ(parsed.account_data.size(), 2u);
+    EXPECT_EQ(parsed.account_data[0].type, "m.ignored_user_list");
+    EXPECT_EQ(parsed.account_data[0].content["some.future.key"], 7);
+    EXPECT_EQ(parsed.account_data[0]
+                  .content["ignored_users"]
+                  .count("@spammer:example.com"),
+              1u);
+    EXPECT_EQ(parsed.account_data[1].type, "m.direct");
+    ASSERT_TRUE(parsed.direct_rooms.has_value());
+    EXPECT_EQ(parsed.direct_rooms->at("@bob:example.com"),
+              std::vector<std::string>{"!dm:example.com"});
+}
+
+// Empty means "nothing changed", and must put nothing on the wire: an
+// account_data section appearing on every idle poll is bytes per client per
+// 30 seconds, and a client cannot tell a restatement from a change.
+TEST(SyncResponse, NoAccountDataWritesNoSection) {
+    SyncResponse sync;
+    sync.next_batch = "s1";
+    json j;
+    to_json(j, sync);
+    EXPECT_FALSE(j.contains("account_data"));
+}
+
+// The read marker, in room account data. `event_id` is the spec's field;
+// the timestamp beside it is what this client's unread dot is arithmetic on
+// (client/src/core/ReadState.h), and it travels so that the dot never needs a
+// /messages request to resolve the id.
+TEST(SyncResponse, RoomAccountDataCarriesTheReadMarker) {
+    SyncResponse sync;
+    sync.next_batch = "s2";
+    JoinedRoom room;
+    room.account_data.push_back({std::string(event_type::kFullyRead),
+                                 json{{std::string(fully_read::kEventId), "$read:example.com"},
+                                      {std::string(fully_read::kOriginServerTs), 1700000000000}}});
+    sync.rooms.join["!room:example.com"] = std::move(room);
+
+    json j;
+    to_json(j, sync);
+    const auto& events = j["rooms"]["join"]["!room:example.com"]["account_data"]["events"];
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events[0]["type"], "m.fully_read");
+    EXPECT_EQ(events[0]["content"]["event_id"], "$read:example.com");
+    EXPECT_EQ(events[0]["content"]["bsfchat.origin_server_ts"], 1700000000000);
+
+    SyncResponse parsed;
+    from_json(j, parsed);
+    const auto& back = parsed.rooms.join.at("!room:example.com").account_data;
+    ASSERT_EQ(back.size(), 1u);
+    EXPECT_EQ(back[0].type, "m.fully_read");
+    EXPECT_EQ(back[0].content[std::string(fully_read::kOriginServerTs)].get<int64_t>(),
+              1700000000000);
+}
+
+// A room with no marker sends no section at all — an upgraded server must
+// look exactly like the old one for every room nobody has read.
+TEST(SyncResponse, RoomWithoutAccountDataWritesNoSection) {
+    SyncResponse sync;
+    sync.next_batch = "s2";
+    sync.rooms.join["!room:example.com"] = JoinedRoom{};
+    json j;
+    to_json(j, sync);
+    EXPECT_FALSE(j["rooms"]["join"]["!room:example.com"].contains("account_data"));
+}
+
+// One malformed document must not cost the client everything after it. An
+// account-data array is the one place on this endpoint where the contents are
+// whatever some other client wrote.
+TEST(SyncResponse, MalformedAccountDataEntriesAreSkippedNotFatal) {
+    json j = {{"next_batch", "s3"},
+              {"account_data",
+               {{"events", json::array({
+                                json::array({1, 2}),                    // not an object
+                                json{{"content", json::object()}},      // no type
+                                json{{"type", "m.x"}},                  // no content
+                                json{{"type", "m.x"}, {"content", 7}},  // content not an object
+                                json{{"type", "m.good"}, {"content", {{"k", "v"}}}},
+                            })}}}};
+    SyncResponse parsed;
+    from_json(j, parsed);
+    ASSERT_EQ(parsed.account_data.size(), 1u);
+    EXPECT_EQ(parsed.account_data[0].type, "m.good");
 }
