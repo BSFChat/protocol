@@ -337,6 +337,29 @@ constexpr std::string_view kLocalpartPrefix = "bot_";
 // displayname or nickname is simply absent rather than "".
 constexpr std::string_view kProfileKey = "bsfchat.bot";
 
+// The key a SUCCESS response carries when the request succeeded and will not
+// do what the caller expects it to.
+//
+// There is exactly one situation on this server that needs such a thing, and
+// it is the one that produced this constant: a bot holding no roles joins a
+// public channel and the join genuinely succeeds, because membership is not a
+// permission here — and then every read and every send in that room is a 403.
+// Nothing in between says so. `POST /bots` reported a bot, `POST /token`
+// reported a token, `POST /join` reported a join, and the first thing to
+// mention the actual state of affairs was a refusal that named the channel.
+//
+// A WARNING ON A 200, rather than turning the join into a refusal, because
+// the join is not wrong: bot scoping deliberately lets a bot into a public
+// room and gives it nothing there (docs/bot-scoping.md §4). What was wrong was
+// that the sequence reported success four times and meant it three.
+//
+// Advisory and free-form — a sentence for a person, never a value to branch
+// on. A client with something to say about the condition should compute it
+// from `GET /bsfchat/bots/{id}/access`, which answers it properly. An unknown
+// key on a Matrix response is ignored, so nothing that has not heard of this
+// is affected.
+constexpr std::string_view kWarningKey = "bsfchat.warning";
+
 // Is this user id a bot's, judged from the id alone?
 //
 // Authoritative BECAUSE of the reservation, not in spite of it: registration
