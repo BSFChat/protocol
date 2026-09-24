@@ -112,10 +112,38 @@ struct EphemeralEvents {
     std::vector<RoomEvent> events;
 };
 
+// One account-data document as /sync carries it: a type and a content object.
+//
+// NOT a RoomEvent, and it cannot be one — account data has no sender, no event
+// id and no timestamp, because it is not something that happened in a room but
+// a value this account stores. The m.direct parser below has always said so in
+// a comment; this is the same statement as a type.
+//
+// The content is raw json rather than a parsed shape on purpose. Account data
+// is a key/value store whose values are the CLIENT's, not the protocol's: the
+// server stores what was PUT and hands it back untouched, and a type nothing
+// on this server interprets must survive the round trip byte for byte. The two
+// types that ARE interpreted (m.direct, m.fully_read) are read out of this by
+// their consumers.
+struct AccountDataEvent {
+    std::string type;
+    nlohmann::json content;
+};
+
 struct JoinedRoom {
     Timeline timeline;
     RoomState state;
-    std::optional<RoomState> account_data;
+    // ROOM account data for the reader — currently m.fully_read, the reader's
+    // own read marker, and nothing else.
+    //
+    // Per-user and per-room, so it is never anybody else's read state: a read
+    // RECEIPT, which is the thing other members can see, is a different type
+    // in a different section and is deliberately not implemented (see
+    // server/docs/read-state.md).
+    //
+    // Was `std::optional<RoomState>` and unused by either end. RoomState is a
+    // vector of RoomEvent, which account data is not — see AccountDataEvent.
+    std::vector<AccountDataEvent> account_data;
     std::optional<EphemeralEvents> ephemeral;
     // Serialized as unread_notifications.notification_count — every unread
     // message from somebody else.
@@ -176,6 +204,29 @@ struct SyncResponse {
         std::map<std::string, InvitedRoom> invite;
     } rooms;
     std::optional<PresenceEvents> presence;
+    // GLOBAL account data for the reader: every document of theirs that
+    // changed within the range this response covers, as stored.
+    //
+    // A DELTA, unlike the two sections below it, and that is deliberate. The
+    // restatement pattern m.direct and the invite list use works because both
+    // are small, derived and idempotent; account data is a store the client
+    // writes into, of unbounded size, and restating all of it on every poll
+    // would put the block list on the wire every 30 seconds forever. Instead
+    // each document carries the stream position of its last write, so the
+    // sync token the client already holds says which ones it has not seen —
+    // see server/src/sync/SyncEngine.cpp and docs/read-state.md.
+    //
+    // Empty therefore means "nothing changed", NOT "this account has no
+    // account data". A client that needs a document it has never been told
+    // about reads it from
+    // GET /_matrix/client/v3/user/{userId}/account_data/{type}; an initial
+    // sync carries the complete set.
+    //
+    // m.direct is NOT in here. It is derived from rooms.is_direct rather than
+    // stored, so it has no stored position to compare a token against, and it
+    // keeps the restatement it has always had. On the wire the two share one
+    // `account_data.events` array, which is where a client reads both from.
+    std::vector<AccountDataEvent> account_data;
     // The reader's direct-message rooms: peer user id -> room ids. Serialized
     // as the Matrix-standard `m.direct` event under top-level
     // account_data.events, and like that event it is a full replacement, not a
