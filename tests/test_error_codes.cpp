@@ -41,6 +41,9 @@ TEST(RefusalReasons, EveryCodeIsSpeltExactlyThis) {
     EXPECT_EQ(refusal::kInviteTargetBannedServer, "BSFCHAT.INVITE_TARGET_BANNED_SERVER");
     EXPECT_EQ(refusal::kInviteNoSuchAccount, "BSFCHAT.INVITE_NO_SUCH_ACCOUNT");
     EXPECT_EQ(refusal::kInviteTargetDeactivated, "BSFCHAT.INVITE_TARGET_DEACTIVATED");
+
+    EXPECT_EQ(refusal::kNoViewChannel, "BSFCHAT.NO_VIEW_CHANNEL");
+    EXPECT_EQ(refusal::kBotNotScoped, "BSFCHAT.BOT_NOT_SCOPED");
 }
 
 // Two reasons that compare equal are two refusals a client cannot tell apart,
@@ -55,6 +58,8 @@ TEST(RefusalReasons, NoTwoCodesCollide) {
         refusal::kInviteTargetBannedServer,
         refusal::kInviteNoSuchAccount,
         refusal::kInviteTargetDeactivated,
+        refusal::kNoViewChannel,
+        refusal::kBotNotScoped,
     };
     std::set<std::string_view> unique(all.begin(), all.end());
     EXPECT_EQ(unique.size(), all.size());
@@ -81,7 +86,9 @@ TEST(RefusalReasons, EveryCodeIsNamespaced) {
                                   refusal::kInviteTargetBannedRoom,
                                   refusal::kInviteTargetBannedServer,
                                   refusal::kInviteNoSuchAccount,
-                                  refusal::kInviteTargetDeactivated}) {
+                                  refusal::kInviteTargetDeactivated,
+                                  refusal::kNoViewChannel,
+                                  refusal::kBotNotScoped}) {
         EXPECT_TRUE(code.starts_with("BSFCHAT.")) << code;
         EXPECT_FALSE(code.starts_with("M_")) << code;
     }

@@ -118,6 +118,39 @@ namespace refusal {
     constexpr std::string_view kInviteNoSuchAccount = "BSFCHAT.INVITE_NO_SUCH_ACCOUNT";
     // The TARGET is a deactivated bot. Deactivation is permanent.
     constexpr std::string_view kInviteTargetDeactivated = "BSFCHAT.INVITE_TARGET_DEACTIVATED";
+
+    // ── "No access to this channel" ──────────────────────────────────────
+    //
+    // The single sentence eight handlers answer with when the caller is a
+    // MEMBER of the room and does not hold VIEW_CHANNEL in it — send, redact,
+    // /messages, /state, /state/{type}, /members and two more. Membership has
+    // already been checked and refused separately ("Not a member of this
+    // room"), so neither reason below tells the caller anything about a room
+    // they are not in.
+    //
+    // TWO REASONS, ONE OF WHICH REFINES THE OTHER, because the remedies are
+    // not the same remedy and the difference is the whole of this file's
+    // reason for existing. "You are denied here" is a channel problem, fixed
+    // in that channel. "Nothing has ever been granted to this account" is not
+    // a channel problem at all, and an operator who reads it as one goes
+    // looking in the wrong place — which is exactly what happened: a new bot
+    // joined a public channel, got a 403 naming the CHANNEL, and the actual
+    // cause was an empty `bsfchat.member.roles` document.
+
+    // The caller is in the room and lacks VIEW_CHANNEL in it. The ordinary
+    // case: a deny override, or a role that was never granted the bit.
+    constexpr std::string_view kNoViewChannel = "BSFCHAT.NO_VIEW_CHANNEL";
+
+    // A REFINEMENT of the above, never sent alongside it. The account is a bot
+    // holding an empty role assignment, so it has no access to ANY channel and
+    // this particular channel is incidental. Distinct because it is the one
+    // refusal here whose remedy is "grant this bot something, anywhere" rather
+    // than "look at this channel's overrides".
+    //
+    // Discloses nothing: the subject is the caller's own account, the caller
+    // can read its own assignment, and a bot is identifiable from its user id
+    // by construction (bot::is_bot_user_id).
+    constexpr std::string_view kBotNotScoped = "BSFCHAT.BOT_NOT_SCOPED";
 } // namespace refusal
 
 struct MatrixError {
