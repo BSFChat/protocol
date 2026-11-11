@@ -56,3 +56,28 @@ TEST(Permissions, TheRuleIsExactlyTheBotClassifier) {
             << "for id \"" << id << "\"";
     }
 }
+
+// flags_from_hex is documented as "returns 0 on failure". It used strtoull,
+// which reads "-1" (and any overflowing value) as all ones — ADMINISTRATOR
+// included — and stops quietly at trailing junk.
+TEST(Permissions, FlagsFromHexIsStrict) {
+    using bsfchat::permission::flags_from_hex;
+    using bsfchat::permission::flags_to_hex;
+    EXPECT_EQ(flags_from_hex("-1"), 0u);
+    EXPECT_EQ(flags_from_hex("0x-1"), 0u);
+    EXPECT_EQ(flags_from_hex("+1ff"), 0u);
+    EXPECT_EQ(flags_from_hex(" 1ff"), 0u);
+    EXPECT_EQ(flags_from_hex("1ffzz"), 0u);
+    EXPECT_EQ(flags_from_hex("0x"), 0u);
+    EXPECT_EQ(flags_from_hex(""), 0u);
+    EXPECT_EQ(flags_from_hex("1" + std::string(16, '0')), 0u); // 17 digits: overflow
+    // Valid forms still parse, and round-trip with flags_to_hex.
+    EXPECT_EQ(flags_from_hex("0x01ff"), 0x1ffu);
+    EXPECT_EQ(flags_from_hex("1FF"), 0x1ffu);
+    EXPECT_EQ(flags_from_hex("ffffffffffffffff"), ~bsfchat::permission::Flags{0});
+    for (bsfchat::permission::Flags f : {bsfchat::permission::Flags{0},
+                                         bsfchat::permission::kEveryoneDefault,
+                                         bsfchat::permission::kAllFlags}) {
+        EXPECT_EQ(flags_from_hex(flags_to_hex(f)), f);
+    }
+}
