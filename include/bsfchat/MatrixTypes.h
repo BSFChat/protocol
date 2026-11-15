@@ -174,6 +174,27 @@ struct InvitedRoom {
     RoomState invite_state;
 };
 
+// A room the reader must drop: one entry of /sync's rooms.leave section.
+//
+// Every key in that section means exactly one thing — "this room is no longer
+// yours, remove it" — whatever the reason; the fields are informational and
+// either may be empty. On the wire:
+//
+//   "rooms": { "leave": { "<room_id>": {
+//       "bsfchat.reason": "leave" | "kick" | "ban" | "deleted" | "no_access",
+//       "timeline": { "events": [ <the reader's own m.room.member event> ] } } } }
+//
+// Named SyncLeftRoom, not LeftRoom, because the server still carries its own
+// bsfchat::LeftRoom for the side channel that predates this field (see
+// server/src/sync/SyncEngine.h), and CI builds the server against protocol
+// main: a second bsfchat::LeftRoom here would be a redefinition there. Once
+// the server has switched to SyncResponse::rooms.leave and deleted its own,
+// it can alias the name back.
+struct SyncLeftRoom {
+    std::string reason;                    // "bsfchat.reason"
+    std::vector<RoomEvent> timeline_events; // "timeline": {"events": [...]}
+};
+
 // Top-level presence block in a /sync response. Matrix delivers
 // m.presence ephemerals here rather than per-room, since presence
 // follows the user, not the room. Each event's `sender` is the
@@ -195,13 +216,23 @@ struct SyncResponse {
         // learned within one poll instead of never. A client may therefore
         // take a delivered response's `invite` as the current truth and drop
         // an invite that has stopped appearing: that is how an invite accepted
-        // or declined on another device clears here, and it is why there is no
-        // rooms.leave section to carry the rejection.
+        // or declined on another device clears here, which is why `leave`
+        // below does not carry rejected invites.
         //
         // Absent means the same as empty. A server that predates this section
         // never sends it, and a client then simply never sees an invite — the
         // behaviour it had before.
         std::map<std::string, InvitedRoom> invite;
+        // Rooms the reader must drop — left, kicked, banned, deleted, or no
+        // longer visible to them. See SyncLeftRoom.
+        //
+        // OMITTED from the wire when empty, so a response with nothing to drop
+        // is byte-identical to one from before this field existed — and so a
+        // server that still writes rooms.leave into the serialised JSON itself
+        // after to_json is not overwritten or duplicated. Parsed tolerantly: an
+        // absent or malformed section is an empty map, a malformed entry keeps
+        // its room id (the key is the instruction) and loses what it garbled.
+        std::map<std::string, SyncLeftRoom> leave;
     } rooms;
     std::optional<PresenceEvents> presence;
     // GLOBAL account data for the reader: every document of theirs that

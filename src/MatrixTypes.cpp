@@ -67,6 +67,18 @@ std::optional<permission::Flags> permission_value(const nlohmann::json& v) {
     return out;
 }
 
+// The leniency the account-data parsers already have, for events: one event
+// that does not parse is skipped rather than costing the caller everything
+// around it.
+bool try_parse_event(const nlohmann::json& ev_json, RoomEvent& ev) {
+    if (!ev_json.is_object()) return false;
+    try {
+        from_json(ev_json, ev);
+        return true;
+    } catch (const nlohmann::json::exception&) {
+        return false;
+    }
+}
 
 } // namespace
 
@@ -318,6 +330,24 @@ void to_json(nlohmann::json& j, const SyncResponse& r) {
         j["rooms"]["invite"] = std::move(rooms_invite);
     }
 
+    // Rooms to drop. Omitted when empty — see SyncResponse::rooms::leave for
+    // why that matters beyond byte-compatibility.
+    if (!r.rooms.leave.empty()) {
+        auto rooms_leave = nlohmann::json::object();
+        for (const auto& [room_id, room] : r.rooms.leave) {
+            auto events = nlohmann::json::array();
+            for (const auto& event : room.timeline_events) {
+                nlohmann::json ev;
+                to_json(ev, event);
+                events.push_back(std::move(ev));
+            }
+            rooms_leave[room_id] = nlohmann::json{
+                {"bsfchat.reason", room.reason},
+                {"timeline", {{"events", std::move(events)}}}};
+        }
+        j["rooms"]["leave"] = std::move(rooms_leave);
+    }
+
     // Top-level presence block — list of m.presence events for users
     // we share rooms with. Optional; absent when nobody's status
     // changed in this delta.
@@ -439,6 +469,35 @@ void from_json(const nlohmann::json& j, SyncResponse& r) {
                 }
             }
             r.rooms.invite[room_id] = std::move(room);
+        }
+    }
+
+    // Rooms to drop. Never throws: whatever is not the expected shape is
+    // skipped, so a garbled leave section cannot cost the client the sync.
+    if (j.contains("rooms") && j["rooms"].is_object() && j["rooms"].contains("leave")
+        && j["rooms"]["leave"].is_object()) {
+        for (const auto& [room_id, room_json] : j["rooms"]["leave"].items()) {
+            if (room_id.empty()) continue;
+            SyncLeftRoom room;
+            if (room_json.is_object()) {
+                const auto reason = room_json.find("bsfchat.reason");
+                if (reason != room_json.end() && reason->is_string()) {
+                    room.reason = reason->get<std::string>();
+                }
+                const auto tl = room_json.find("timeline");
+                if (tl != room_json.end() && tl->is_object()) {
+                    const auto events = tl->find("events");
+                    if (events != tl->end() && events->is_array()) {
+                        for (const auto& ev_json : *events) {
+                            RoomEvent ev;
+                            if (try_parse_event(ev_json, ev)) {
+                                room.timeline_events.push_back(std::move(ev));
+                            }
+                        }
+                    }
+                }
+            }
+            r.rooms.leave[room_id] = std::move(room);
         }
     }
 

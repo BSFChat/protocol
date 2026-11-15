@@ -627,3 +627,106 @@ TEST(StateIntegers, CallVersionAsStringIsTheDefault) {
     ASSERT_NO_THROW(from_json(json{{"call_id", "c1"}, {"version", "1"}}, c));
     EXPECT_EQ(c.version, 1);
 }
+
+// ---------------------------------------------------------------------------
+// rooms.leave
+// ---------------------------------------------------------------------------
+
+namespace {
+RoomEvent own_leave_event() {
+    RoomEvent ev;
+    ev.event_id = "$leave:example.com";
+    ev.room_id = "!gone:example.com";
+    ev.sender = "@mod:example.com";
+    ev.type = "m.room.member";
+    ev.state_key = "@alice:example.com";
+    ev.content.data = {{"membership", "leave"}};
+    ev.origin_server_ts = 1700000000000;
+    return ev;
+}
+} // namespace
+
+TEST(SyncResponse, LeaveSectionRoundTrips) {
+    SyncResponse sync;
+    sync.next_batch = "s9";
+    sync.rooms.leave["!gone:example.com"] = SyncLeftRoom{"kick", {own_leave_event()}};
+    sync.rooms.leave["!deleted:example.com"] = SyncLeftRoom{"deleted", {}};
+
+    json j;
+    to_json(j, sync);
+    const auto& leave = j["rooms"]["leave"];
+    ASSERT_TRUE(leave.is_object());
+    EXPECT_EQ(leave["!gone:example.com"]["bsfchat.reason"], "kick");
+    ASSERT_EQ(leave["!gone:example.com"]["timeline"]["events"].size(), 1u);
+    EXPECT_EQ(leave["!gone:example.com"]["timeline"]["events"][0]["state_key"],
+              "@alice:example.com");
+    EXPECT_TRUE(leave["!deleted:example.com"]["timeline"]["events"].is_array());
+    EXPECT_TRUE(leave["!deleted:example.com"]["timeline"]["events"].empty());
+
+    SyncResponse parsed;
+    from_json(j, parsed);
+    ASSERT_EQ(parsed.rooms.leave.size(), 2u);
+    EXPECT_EQ(parsed.rooms.leave["!gone:example.com"].reason, "kick");
+    ASSERT_EQ(parsed.rooms.leave["!gone:example.com"].timeline_events.size(), 1u);
+    EXPECT_EQ(parsed.rooms.leave["!gone:example.com"].timeline_events[0].event_id,
+              "$leave:example.com");
+    EXPECT_EQ(parsed.rooms.leave["!deleted:example.com"].reason, "deleted");
+}
+
+TEST(SyncResponse, NoLeavesWritesNoLeaveSection) {
+    // Byte-compatible with every response before the field existed — and it
+    // is what keeps the server's own post-processing (which writes
+    // rooms.leave into the JSON after to_json) from meeting a second copy.
+    SyncResponse sync;
+    sync.next_batch = "s1";
+    sync.rooms.join["!room:example.com"] = JoinedRoom{};
+    json j;
+    to_json(j, sync);
+    EXPECT_FALSE(j["rooms"].contains("leave"));
+
+    // What that post-processing produces still parses into the field.
+    j["rooms"]["leave"] = {{"!x:example.com",
+                            {{"bsfchat.reason", "ban"}, {"timeline", {{"events", json::array()}}}}}};
+    SyncResponse parsed;
+    from_json(j, parsed);
+    ASSERT_EQ(parsed.rooms.leave.count("!x:example.com"), 1u);
+    EXPECT_EQ(parsed.rooms.leave["!x:example.com"].reason, "ban");
+}
+
+TEST(SyncResponse, MalformedLeaveSectionIsTolerated) {
+    // Not an object at all: empty, and the rest of the sync still parses.
+    for (const json& bad : {json("nope"), json::array({1, 2}), json(nullptr), json(7)}) {
+        json j = {{"next_batch", "s1"}, {"rooms", {{"join", json::object()}, {"leave", bad}}}};
+        SyncResponse parsed;
+        ASSERT_NO_THROW(from_json(j, parsed));
+        EXPECT_TRUE(parsed.rooms.leave.empty());
+        EXPECT_EQ(parsed.next_batch, "s1");
+    }
+
+    // Entries: the key is the instruction, so a garbled value keeps the room
+    // id and loses only what it garbled.
+    json good_event;
+    to_json(good_event, own_leave_event());
+    json j = {
+        {"next_batch", "s2"},
+        {"rooms", {{"leave", {
+            {"!a:x", "not an object"},
+            {"!b:x", {{"bsfchat.reason", 42}, {"timeline", "nope"}}},
+            {"!c:x", {{"bsfchat.reason", "leave"},
+                      {"timeline", {{"events", json::array({
+                          json{{"type", "m.room.member"}},   // no sender: skipped
+                          json("garbage"),                   // not an object: skipped
+                          good_event})}}}}},
+            {"", {{"bsfchat.reason", "leave"}}},             // no room id: skipped
+        }}}},
+    };
+    SyncResponse parsed;
+    ASSERT_NO_THROW(from_json(j, parsed));
+    ASSERT_EQ(parsed.rooms.leave.size(), 3u);
+    EXPECT_TRUE(parsed.rooms.leave["!a:x"].reason.empty());
+    EXPECT_TRUE(parsed.rooms.leave["!b:x"].reason.empty());
+    EXPECT_TRUE(parsed.rooms.leave["!b:x"].timeline_events.empty());
+    EXPECT_EQ(parsed.rooms.leave["!c:x"].reason, "leave");
+    ASSERT_EQ(parsed.rooms.leave["!c:x"].timeline_events.size(), 1u);
+    EXPECT_EQ(parsed.rooms.leave["!c:x"].timeline_events[0].sender, "@mod:example.com");
+}
