@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 #include "bsfchat/Constants.h"
 #include "bsfchat/MatrixTypes.h"
+#include "bsfchat/Permissions.h"
+
+#include <cstdint>
+#include <limits>
 
 using namespace bsfchat;
 using json = nlohmann::json;
@@ -478,4 +482,148 @@ TEST(SyncResponse, MalformedAccountDataEntriesAreSkippedNotFatal) {
     from_json(j, parsed);
     ASSERT_EQ(parsed.account_data.size(), 1u);
     EXPECT_EQ(parsed.account_data[0].type, "m.good");
+}
+
+// ---------------------------------------------------------------------------
+// Permission values from the wire (audit 2026-11-15, P-1 / P-2)
+// ---------------------------------------------------------------------------
+// is_number_integer() is true for negative numbers, and get<uint64_t>() of -1
+// is all ones — every flag, ADMINISTRATOR included. Any account able to write
+// a roles or override event could hand itself everything with `-1`.
+
+namespace {
+ServerRole role_with_permissions(const json& value) {
+    ServerRole r;
+    from_json(json{{"id", "r"}, {"name", "R"}, {"permissions", value}}, r);
+    return r;
+}
+ChannelPermissionOverride override_with(const json& allow, const json& deny) {
+    ChannelPermissionOverride o;
+    from_json(json{{"allow", allow}, {"deny", deny}}, o);
+    return o;
+}
+} // namespace
+
+TEST(PermissionParsing, NegativeRolePermissionsGrantNothing) {
+    EXPECT_EQ(role_with_permissions(-1).permissions, 0u);
+    EXPECT_EQ(role_with_permissions(std::numeric_limits<std::int64_t>::min()).permissions, 0u);
+}
+
+TEST(PermissionParsing, NonIntegerRolePermissionsGrantNothing) {
+    EXPECT_EQ(role_with_permissions(3.0).permissions, 0u);
+    EXPECT_EQ(role_with_permissions(true).permissions, 0u);
+    EXPECT_EQ(role_with_permissions(nullptr).permissions, 0u);
+    EXPECT_EQ(role_with_permissions("0x-1").permissions, 0u);
+    EXPECT_EQ(role_with_permissions(json::array()).permissions, 0u);
+}
+
+TEST(PermissionParsing, RolePermissionsAreMaskedToDefinedFlags) {
+    // Legacy unsigned integers and hex strings both still parse — minus any
+    // bit this build does not define.
+    EXPECT_EQ(role_with_permissions(std::uint64_t{0x1f}).permissions, 0x1fu);
+    EXPECT_EQ(role_with_permissions("0x1f").permissions, 0x1fu);
+    EXPECT_EQ(role_with_permissions("ffffffffffffffff").permissions, permission::kAllFlags);
+    EXPECT_EQ(role_with_permissions(~std::uint64_t{0}).permissions, permission::kAllFlags);
+    EXPECT_EQ(role_with_permissions(std::uint64_t{1} << 63).permissions, 0u);
+}
+
+TEST(PermissionParsing, NegativeOverrideValuesAreIgnored) {
+    const auto o = override_with(-1, -1);
+    EXPECT_EQ(o.allow, 0u);
+    EXPECT_EQ(o.deny, 0u);
+    const auto f = override_with(1.5, "nope");
+    EXPECT_EQ(f.allow, 0u);
+    EXPECT_EQ(f.deny, 0u);
+}
+
+TEST(PermissionParsing, OverrideValuesAreMaskedToDefinedFlags) {
+    const auto o = override_with("ffffffffffffffff", std::uint64_t{0x3});
+    EXPECT_EQ(o.allow, permission::kAllFlags);
+    EXPECT_EQ(o.deny, 0x3u);
+    // And what is written is what is read back.
+    json j;
+    to_json(j, o);
+    ChannelPermissionOverride back;
+    from_json(j, back);
+    EXPECT_EQ(back.allow, o.allow);
+    EXPECT_EQ(back.deny, o.deny);
+}
+
+// ---------------------------------------------------------------------------
+// Integers in untrusted state (P-3)
+// ---------------------------------------------------------------------------
+// value(key, int) narrowed a 64-bit number into an int (2^32 became 0) and
+// threw type_error on a string, failing the whole event. Now: type-checked,
+// clamped, and the default when it is not an integer at all.
+
+TEST(StateIntegers, RolePositionIsClampedAndTypeChecked) {
+    auto pos = [](const json& v) {
+        ServerRole r;
+        from_json(json{{"id", "r"}, {"position", v}}, r);
+        return r.position;
+    };
+    EXPECT_EQ(pos(10), 10);
+    EXPECT_EQ(pos(-5), 0);
+    EXPECT_EQ(pos(std::int64_t{1} << 32), limits::kMaxRolePosition);
+    EXPECT_EQ(pos(~std::uint64_t{0}), limits::kMaxRolePosition);
+    EXPECT_EQ(pos("10"), 0);
+    EXPECT_EQ(pos(2.5), 0);
+}
+
+TEST(StateIntegers, SlowmodeIsClampedAndTypeChecked) {
+    auto slow = [](const json& v) {
+        ChannelSettingsContent c;
+        from_json(json{{"slowmode_seconds", v}}, c);
+        return c.slowmode_seconds;
+    };
+    EXPECT_EQ(slow(30), 30);
+    EXPECT_EQ(slow(-1), 0);
+    EXPECT_EQ(slow(std::int64_t{1} << 40), limits::kMaxSlowmodeSeconds);
+    EXPECT_EQ(slow("30"), 0);
+    ChannelSettingsContent absent;
+    EXPECT_NO_THROW(from_json(json::object(), absent));
+    EXPECT_EQ(absent.slowmode_seconds, 0);
+}
+
+TEST(StateIntegers, MaxParticipantsIsClampedAndTypeChecked) {
+    auto maxp = [](const json& v) {
+        VoiceChannelContent c;
+        from_json(json{{"enabled", true}, {"max_participants", v}}, c);
+        return c.max_participants;
+    };
+    EXPECT_EQ(maxp(8), 8);
+    EXPECT_EQ(maxp(-3), 0);  // unlimited, as a negative always behaved
+    EXPECT_EQ(maxp(std::int64_t{1} << 32), limits::kMaxVoiceParticipants);
+    EXPECT_EQ(maxp("8"), 0);
+}
+
+TEST(StateIntegers, PowerLevelsAreClampedAndBadEntriesDropped) {
+    json j = {
+        {"users_default", "high"},             // not an integer: default
+        {"ban", std::int64_t{1} << 40},        // clamped
+        {"kick", -(std::int64_t{1} << 40)},    // clamped
+        {"redact", 75},
+        {"users", {{"@a:x", 100}, {"@b:x", "100"}, {"@c:x", 1.5},
+                   {"@d:x", std::int64_t{1} << 33}}},
+        {"events", {{"m.room.name", 50}, {"m.bad", nullptr}}},
+    };
+    PowerLevelsContent p;
+    ASSERT_NO_THROW(from_json(j, p));
+    EXPECT_EQ(p.users_default, 0);
+    EXPECT_EQ(p.ban, limits::kMaxPowerLevel);
+    EXPECT_EQ(p.kick, limits::kMinPowerLevel);
+    EXPECT_EQ(p.redact, 75);
+    EXPECT_EQ(p.state_default, 50);
+    ASSERT_EQ(p.users.size(), 2u);
+    EXPECT_EQ(p.users["@a:x"], 100);
+    EXPECT_EQ(p.users["@d:x"], limits::kMaxPowerLevel);
+    ASSERT_EQ(p.events.size(), 1u);
+    EXPECT_EQ(p.events["m.room.name"], 50);
+}
+
+TEST(StateIntegers, CallVersionAsStringIsTheDefault) {
+    // Matrix VoIP v1 writes "version": "1". That used to throw.
+    CallHangupContent c;
+    ASSERT_NO_THROW(from_json(json{{"call_id", "c1"}, {"version", "1"}}, c));
+    EXPECT_EQ(c.version, 1);
 }

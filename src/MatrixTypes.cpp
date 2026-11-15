@@ -2,6 +2,9 @@
 #include "bsfchat/Constants.h"
 #include "bsfchat/Permissions.h"
 
+#include <algorithm>
+#include <limits>
+
 namespace bsfchat {
 
 namespace {
@@ -17,6 +20,53 @@ void get_optional(const nlohmann::json& j, const char* key, std::optional<T>& va
         val = j[key].get<T>();
     }
 }
+
+// An integer from untrusted JSON, clamped into [lo, hi]. Anything that is not
+// an integer — a string, a float, a bool, null — yields std::nullopt rather
+// than the narrowing conversion or type_error that get<int>() / value(key, int)
+// give: those either wrap 2^32 into 0 or take the whole parse down with them.
+std::optional<int> clamped_int(const nlohmann::json& v, int lo, int hi) {
+    std::int64_t n;
+    if (v.is_number_unsigned()) {
+        const auto u = v.get<std::uint64_t>();
+        n = u > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())
+                ? std::numeric_limits<std::int64_t>::max()
+                : static_cast<std::int64_t>(u);
+    } else if (v.is_number_integer()) {
+        n = v.get<std::int64_t>();
+    } else {
+        return std::nullopt;
+    }
+    return static_cast<int>(std::clamp<std::int64_t>(n, lo, hi));
+}
+
+// The same for a field of an object: absent or not an integer -> `def`.
+int clamped_int(const nlohmann::json& j, const char* key, int def, int lo, int hi) {
+    if (!j.is_object()) return def;
+    const auto it = j.find(key);
+    if (it == j.end()) return def;
+    return clamped_int(*it, lo, hi).value_or(def);
+}
+
+constexpr int kIntMax = std::numeric_limits<int>::max();
+
+int power_level(const nlohmann::json& j, const char* key, int def) {
+    return clamped_int(j, key, def, limits::kMinPowerLevel, limits::kMaxPowerLevel);
+}
+
+// A permission bitfield from the wire: a hex string (the format every writer
+// uses) or, from older events, a non-negative integer. Anything else — a
+// negative number, which get<uint64_t>() used to turn into all ones and so
+// into ADMINISTRATOR, a float, a malformed string — is std::nullopt. Bits this
+// build does not define are masked off.
+std::optional<permission::Flags> permission_value(const nlohmann::json& v) {
+    std::optional<permission::Flags> out;
+    if (v.is_string()) out = permission::try_flags_from_hex(v.get<std::string>());
+    else if (v.is_number_unsigned()) out = v.get<std::uint64_t>();
+    if (out) *out &= permission::kAllFlags;
+    return out;
+}
+
 
 } // namespace
 
@@ -359,13 +409,14 @@ void from_json(const nlohmann::json& j, SyncResponse& r) {
                 }
             }
 
-            if (room_json.contains("unread_notifications")) {
+            if (room_json.contains("unread_notifications")
+                && room_json["unread_notifications"].is_object()) {
                 const auto& un = room_json["unread_notifications"];
                 if (un.contains("notification_count")) {
-                    room.unread_count = un["notification_count"].get<int>();
+                    room.unread_count = clamped_int(un["notification_count"], 0, kIntMax);
                 }
                 if (un.contains("highlight_count")) {
-                    room.highlight_count = un["highlight_count"].get<int>();
+                    room.highlight_count = clamped_int(un["highlight_count"], 0, kIntMax);
                 }
             }
 
@@ -484,19 +535,26 @@ void to_json(nlohmann::json& j, const PowerLevelsContent& p) {
 }
 
 void from_json(const nlohmann::json& j, PowerLevelsContent& p) {
-    p.users_default = j.value("users_default", 0);
-    p.events_default = j.value("events_default", 0);
-    p.state_default = j.value("state_default", 50);
-    p.ban = j.value("ban", 50);
-    p.kick = j.value("kick", 50);
-    p.invite = j.value("invite", 0);
-    p.redact = j.value("redact", 50);
-    if (j.contains("users") && j["users"].is_object()) {
-        p.users = j["users"].get<std::map<std::string, int>>();
-    }
-    if (j.contains("events") && j["events"].is_object()) {
-        p.events = j["events"].get<std::map<std::string, int>>();
-    }
+    // Untrusted state: every level is type-checked and clamped, and a map
+    // entry that is not an integer is dropped rather than failing the whole
+    // event (get<std::map<std::string, int>>() threw on one string value).
+    p.users_default = power_level(j, "users_default", 0);
+    p.events_default = power_level(j, "events_default", 0);
+    p.state_default = power_level(j, "state_default", 50);
+    p.ban = power_level(j, "ban", 50);
+    p.kick = power_level(j, "kick", 50);
+    p.invite = power_level(j, "invite", 0);
+    p.redact = power_level(j, "redact", 50);
+    auto read_map = [&](const char* key, std::map<std::string, int>& out) {
+        if (!j.contains(key) || !j[key].is_object()) return;
+        for (const auto& [k, v] : j[key].items()) {
+            if (auto n = clamped_int(v, limits::kMinPowerLevel, limits::kMaxPowerLevel)) {
+                out[k] = *n;
+            }
+        }
+    };
+    read_map("users", p.users);
+    read_map("events", p.events);
 }
 
 // VoiceChannelContent
@@ -506,7 +564,8 @@ void to_json(nlohmann::json& j, const VoiceChannelContent& v) {
 
 void from_json(const nlohmann::json& j, VoiceChannelContent& v) {
     v.enabled = j.value("enabled", true);
-    v.max_participants = j.value("max_participants", 0);
+    // Negative has always behaved as 0 (unlimited): the server's check is `> 0`.
+    v.max_participants = clamped_int(j, "max_participants", 0, 0, limits::kMaxVoiceParticipants);
 }
 
 // VoiceMemberContent
@@ -544,12 +603,14 @@ void to_json(nlohmann::json& j, const CallInviteContent& c) {
 
 void from_json(const nlohmann::json& j, CallInviteContent& c) {
     c.call_id = j.at("call_id").get<std::string>();
-    c.lifetime = j.value("lifetime", 60000);
+    c.lifetime = clamped_int(j, "lifetime", 60000, 0, kIntMax);
     if (j.contains("offer")) {
         c.offer.type = j["offer"].value("type", "");
         c.offer.sdp = j["offer"].value("sdp", "");
     }
-    c.version = j.value("version", 1);
+    // Matrix VoIP v1 sends "version": "1" as a string; anything that is not
+    // an integer is the default.
+    c.version = clamped_int(j, "version", 1, 0, kIntMax);
 }
 
 // CallAnswerContent
@@ -567,7 +628,7 @@ void from_json(const nlohmann::json& j, CallAnswerContent& c) {
         c.answer.type = j["answer"].value("type", "");
         c.answer.sdp = j["answer"].value("sdp", "");
     }
-    c.version = j.value("version", 1);
+    c.version = clamped_int(j, "version", 1, 0, kIntMax);
 }
 
 // CallCandidatesContent
@@ -585,13 +646,13 @@ void to_json(nlohmann::json& j, const CallCandidatesContent& c) {
 
 void from_json(const nlohmann::json& j, CallCandidatesContent& c) {
     c.call_id = j.at("call_id").get<std::string>();
-    c.version = j.value("version", 1);
+    c.version = clamped_int(j, "version", 1, 0, kIntMax);
     if (j.contains("candidates")) {
         for (const auto& cj : j["candidates"]) {
             CallCandidatesContent::Candidate cand;
             cand.candidate = cj.value("candidate", "");
             cand.sdpMid = cj.value("sdpMid", "");
-            cand.sdpMLineIndex = cj.value("sdpMLineIndex", 0);
+            cand.sdpMLineIndex = clamped_int(cj, "sdpMLineIndex", 0, 0, 65535);
             c.candidates.push_back(std::move(cand));
         }
     }
@@ -609,7 +670,7 @@ void to_json(nlohmann::json& j, const CallHangupContent& c) {
 void from_json(const nlohmann::json& j, CallHangupContent& c) {
     c.call_id = j.at("call_id").get<std::string>();
     c.reason = j.value("reason", "");
-    c.version = j.value("version", 1);
+    c.version = clamped_int(j, "version", 1, 0, kIntMax);
 }
 
 // CategoryContent
@@ -619,7 +680,7 @@ void to_json(nlohmann::json& j, const CategoryContent& c) {
 
 void from_json(const nlohmann::json& j, CategoryContent& c) {
     c.parent_id = j.value("parent_id", "");
-    c.order = j.value("order", 0);
+    c.order = clamped_int(j, "order", 0, -limits::kMaxSortOrder, limits::kMaxSortOrder);
 }
 
 // RoomTypeContent
@@ -651,14 +712,11 @@ void from_json(const nlohmann::json& j, ServerRole& r) {
     r.id = j.value("id", "");
     r.name = j.value("name", "");
     r.color = j.value("color", "");
-    r.position = j.value("position", 0);
+    r.position = clamped_int(j, "position", 0, 0, limits::kMaxRolePosition);
+    // A permissions value that does not parse grants nothing (0), and bits
+    // this build does not define are masked off. See permission_value().
     if (j.contains("permissions")) {
-        const auto& p = j["permissions"];
-        if (p.is_string()) {
-            r.permissions = permission::flags_from_hex(p.get<std::string>());
-        } else if (p.is_number_integer()) {
-            r.permissions = p.get<std::uint64_t>();
-        }
+        r.permissions = permission_value(j["permissions"]).value_or(0);
     }
     r.mentionable = j.value("mentionable", false);
     r.hoist = j.value("hoist", false);
@@ -666,7 +724,7 @@ void from_json(const nlohmann::json& j, ServerRole& r) {
     // only safe default: a role nobody marked opt-in must not become opt-in
     // because an old server wrote the event.
     r.self_assignable = j.value("self_assignable", false);
-    r.level = j.value("level", 0);
+    r.level = power_level(j, "level", 0);
     // Fallback: if role has no explicit id but has a name, derive a stable id.
     if (r.id.empty() && !r.name.empty()) r.id = r.name;
 }
@@ -713,7 +771,7 @@ void to_json(nlohmann::json& j, const ChannelSettingsContent& c) {
 }
 
 void from_json(const nlohmann::json& j, ChannelSettingsContent& c) {
-    c.slowmode_seconds = j.value("slowmode_seconds", 0);
+    c.slowmode_seconds = clamped_int(j, "slowmode_seconds", 0, 0, limits::kMaxSlowmodeSeconds);
 }
 
 // ChannelPermissionOverride
@@ -724,11 +782,12 @@ void to_json(nlohmann::json& j, const ChannelPermissionOverride& o) {
 }
 
 void from_json(const nlohmann::json& j, ChannelPermissionOverride& o) {
+    // Unparseable -> 0, as a malformed hex string always was: a negative
+    // number no longer becomes all ones (an `allow` of every flag, including
+    // ADMINISTRATOR). Undefined bits are masked off.
     auto read = [&](const char* key, std::uint64_t& out) {
         if (!j.contains(key)) return;
-        const auto& v = j[key];
-        if (v.is_string()) out = permission::flags_from_hex(v.get<std::string>());
-        else if (v.is_number_integer()) out = v.get<std::uint64_t>();
+        out = permission_value(j[key]).value_or(0);
     };
     read("allow", o.allow);
     read("deny", o.deny);

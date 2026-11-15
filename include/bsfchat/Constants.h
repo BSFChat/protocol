@@ -520,6 +520,21 @@ namespace limits {
     // contiguous. The ceiling exists so arithmetic on them cannot be pushed
     // anywhere near overflow, not because the range is meaningful.
     constexpr int kMaxRolePosition = 1000000;
+
+    // Read-side bounds for integers in state events. State is written by
+    // other accounts (and by older servers that validated less), so the
+    // parsers in MatrixTypes.cpp clamp into these instead of narrowing a
+    // 64-bit JSON number into an int or throwing on a wrong type. Generous on
+    // purpose: they exist to keep arithmetic on the values sane, not to
+    // impose policy, which is the writing endpoint's job.
+    constexpr int kMaxSlowmodeSeconds = 7 * 24 * 60 * 60;   // one week
+    constexpr int kMaxVoiceParticipants = 10000;            // 0 = unlimited
+    // Power levels are compared, not summed; +/- one billion keeps every
+    // realistic ordering and leaves headroom for +1 arithmetic.
+    constexpr int kMinPowerLevel = -1000000000;
+    constexpr int kMaxPowerLevel = 1000000000;
+    // Category sort order: a ladder like role positions, signed.
+    constexpr int kMaxSortOrder = 1000000000;
 } // namespace limits
 
 } // namespace bsfchat
