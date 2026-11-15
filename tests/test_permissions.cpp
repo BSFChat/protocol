@@ -81,3 +81,23 @@ TEST(Permissions, FlagsFromHexIsStrict) {
         EXPECT_EQ(flags_from_hex(flags_to_hex(f)), f);
     }
 }
+
+// flags_from_hex's 0-on-failure is indistinguishable from a real "0x0". The
+// optional variant is the one that can tell them apart, and flags_from_hex is
+// exactly it with the failure folded to 0.
+TEST(Permissions, TryFlagsFromHexDistinguishesFailureFromZero) {
+    using bsfchat::permission::try_flags_from_hex;
+    using bsfchat::permission::flags_from_hex;
+    ASSERT_TRUE(try_flags_from_hex("0x0").has_value());
+    EXPECT_EQ(*try_flags_from_hex("0x0"), 0u);
+    EXPECT_EQ(*try_flags_from_hex("0"), 0u);
+    EXPECT_EQ(*try_flags_from_hex("0x1ff"), 0x1ffu);
+    for (const char* bad : {"", "0x", "-1", "0x-1", "+1", " 1", "1 ", "zz", "0x1g",
+                            "11111111111111111"}) {
+        EXPECT_FALSE(try_flags_from_hex(bad).has_value()) << "for \"" << bad << "\"";
+        EXPECT_EQ(flags_from_hex(bad), 0u) << "for \"" << bad << "\"";
+    }
+    // As written: undefined bits are NOT masked here. Masking is the caller's
+    // decision (the event parsers in MatrixTypes make it).
+    EXPECT_EQ(*try_flags_from_hex("ffffffffffffffff"), ~bsfchat::permission::Flags{0});
+}

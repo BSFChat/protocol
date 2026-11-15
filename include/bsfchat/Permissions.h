@@ -3,6 +3,7 @@
 #include <bsfchat/Constants.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -152,7 +153,16 @@ constexpr const char* kAdmin = "admin";
 // what's needed). Used for all wire serialization of permission fields.
 std::string flags_to_hex(Flags flags);
 
-// Parse a hex string like "0x01ff" or "1ff" into Flags. Returns 0 on failure.
+// Parse a hex string like "0x01ff" or "1ff" into Flags: an optional "0x"/"0X"
+// and then 1-16 hex digits, nothing else. std::nullopt on anything else, so a
+// caller can tell a malformed mask from a genuine "0x0".
+//
+// Returns the bits as written, undefined ones included; mask with kAllFlags
+// where the value is going to be acted on.
+std::optional<Flags> try_flags_from_hex(std::string_view s);
+
+// As try_flags_from_hex, but 0 on failure. Kept for existing callers; new code
+// that needs to distinguish failure should use try_flags_from_hex.
 Flags flags_from_hex(const std::string& s);
 
 } // namespace permission
